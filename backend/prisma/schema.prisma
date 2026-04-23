@@ -1,0 +1,94 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  name      String
+  username  String?  @unique
+  email     String   @unique
+  password  String   @default("password123")
+  phone     String?
+  avatar    String?
+  role      String   @default("vendedor")
+  createdAt DateTime @default(now())
+}
+
+model Product {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique
+  description String?
+  category    String   @default("Materiales")
+  quantity    Int      @default(0)
+  cost        Float    @default(0.0)
+  margin      Float    @default(0.0)
+  price       Float    @default(0.0)
+  tax         Float    @default(16.0)
+  createdAt   DateTime @default(now())
+}
+
+model Backorder {
+  id        Int      @id @default(autoincrement())
+  cliente   String
+  vendedor  String?
+  producto  String
+  documento String
+  cantidad  Int      @default(0)
+  pendiente Int      @default(0)
+  precio    Float    @default(0.0)
+  estado    String   @default("En Proceso")
+  prioridad String?
+  createdAt DateTime @default(now())
+}
+
+model Prospect {
+  id        Int      @id @default(autoincrement())
+  name      String
+  phone     String?
+  email     String?
+  interest  String?
+  location  String?
+  budget    Float?
+  stage     String   @default("Contacto")
+  isClient  Boolean  @default(false)
+  notes     String?  @default("")
+  appointmentDate   String?
+  appointmentMethod String?
+  meetingDone       Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model Activity {
+  id          Int      @id @default(autoincrement())
+  type        String   @default("Phone")
+  client      String
+  description String
+  date        String
+  time        String
+  status      String   @default("Pendiente")
+  createdAt   DateTime @default(now())
+}
+
+model Cartera {
+  id        Int      @id @default(autoincrement())
+  client    String
+  seller    String
+  amount    Float
+  ageGroup  String   @default("1-30")
+  status    String   @default("Pendiente")
+  createdAt DateTime @default(now())
+}
+
+model SellerPerformance {
+  id        Int      @id @default(autoincrement())
+  name      String
+  email     String
+  sales     Float    @default(0.0)
+  budget    Float    @default(0.0)
+  createdAt DateTime @default(now())
+}
