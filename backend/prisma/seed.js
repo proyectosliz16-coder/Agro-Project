@@ -5,6 +5,18 @@ async function main() {
   console.log('--- Iniciando Semilla de Datos (Seeding) ---');
 
   // 1. Crear Usuarios (Vendedores y Admin)
+  const master = await prisma.user.upsert({
+    where: { email: 'master@agriflow.com' },
+    update: {},
+    create: {
+      email: 'master@agriflow.com',
+      username: 'master',
+      name: 'Administrador Master',
+      password: '1234',
+      role: 'Master',
+    },
+  });
+
   const admin = await prisma.user.upsert({
     where: { email: 'admin@agriflow.com' },
     update: {},
