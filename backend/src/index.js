@@ -7,8 +7,8 @@ const app = express();
 const PORT = 8080;
 
 app.use(cors());
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // --- RUTAS DE USUARIOS Y AUTENTICACIÓN ---
 
@@ -61,7 +61,15 @@ app.post('/api/register', async (req, res) => {
   const { name, username, email, password, phone, avatar, role } = req.body;
   try {
     const newUser = await prisma.user.create({
-      data: { name, username, email, password: password || '1234', phone, avatar, role }
+      data: { 
+        name, 
+        username: (username && username.trim() !== '') ? username : null, 
+        email, 
+        password: password || '1234', 
+        phone, 
+        avatar, 
+        role 
+      }
     });
 
     if (role === 'vendedor' || role === 'Vendedor') {
@@ -76,10 +84,11 @@ app.post('/api/register', async (req, res) => {
 
     res.json(newUser);
   } catch (error) {
+    console.error('Error al registrar usuario:', error);
     if (error.code === 'P2002') {
-      res.status(400).json({ error: 'El correo o nombre de usuario ya está registrado' });
+      res.status(400).json({ error: `El ${error.meta?.target?.[0] || 'campo'} ya está registrado` });
     } else {
-      res.status(500).json({ error: 'Error al registrar usuario' });
+      res.status(500).json({ error: 'Error al registrar usuario', details: error.message });
     }
   }
 });
@@ -96,6 +105,51 @@ app.get('/api/users', async (req, res) => {
   }
 });
 
+// Editar usuario
+app.put('/api/users/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, username, email, phone, avatar, role, password } = req.body;
+    
+    console.log(`Petición para actualizar usuario ID: ${id}`);
+
+    // Preparar data de actualización
+    const updateData = { 
+      name, 
+      username: (username && username.trim() !== '') ? username : null, 
+      email, 
+      phone, 
+      avatar, 
+      role 
+    };
+    
+    // Si se envía contraseña y no está vacía, actualizarla
+    if (password && password.trim() !== '') {
+      updateData.password = password;
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id: parseInt(id) },
+      data: updateData
+    });
+    
+    console.log(`Usuario ${updatedUser.name} actualizado exitosamente`);
+    res.json(updatedUser);
+  } catch (err) {
+    console.error('Error detallado actualizando usuario:', err);
+    let errorMessage = 'Error al actualizar usuario';
+    
+    if (err.code === 'P2002') {
+      errorMessage = `El ${err.meta?.target?.[0] || 'campo'} ya está en uso por otro usuario.`;
+    }
+    
+    res.status(500).json({ 
+      error: errorMessage, 
+      details: err.message 
+    });
+  }
+});
+
 // Ruta de salud del sistema
 app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', message: 'Backend de AgriFlow Pro funcionando correctamente' });
@@ -103,10 +157,10 @@ app.get('/api/health', (req, res) => {
 
 // Endpoint para registrar un nuevo Backorder
 app.post('/api/backorders', async (req, res) => {
-  const { cliente, vendedor, producto, cantidad, pendiente, estado, prioridad, documento, precio } = req.body;
+  const { cliente, vendedor, producto, cantidad, pendiente, estado, prioridad, documento, precio, isNewClient } = req.body;
   
   try {
-    const docId = `PED-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const docId = `AGRO-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
     const newBackorder = await prisma.backorder.create({
       data: {
         cliente,
@@ -117,7 +171,8 @@ app.post('/api/backorders', async (req, res) => {
         pendiente: pendiente !== undefined ? parseInt(pendiente) : parseInt(cantidad) || 0,
         precio: parseFloat(precio) || 0,
         estado: estado || 'En Proceso',
-        prioridad: prioridad || 'Media'
+        prioridad: prioridad || 'Media',
+        isNewClient: !!isNewClient
       }
     });
     res.json(newBackorder);
@@ -176,30 +231,42 @@ app.put('/api/backorders/by-folio/:documento', async (req, res) => {
         data: {
           estado: estado || it.estado,
           cantidad: cantidad !== undefined ? Math.round(it.cantidad * ratioCant) : it.cantidad,
-          pendiente: pendiente !== undefined ? Math.round(it.pendiente * ratioPend) : it.pendiente
+          pendiente: pendiente !== undefined ? Math.round(it.pendiente * ratioPend) : it.pendiente,
+          driverName: req.body.driverName,
+          unitInfo: req.body.unitInfo,
+          routeInfo: req.body.routeInfo,
+          deliveryNotes: req.body.deliveryNotes,
+          billingStatus: req.body.billingStatus
         }
       });
     }
 
-    res.json({ message: 'Folio y cantidades actualizadas correctamente' });
+    res.json({ message: 'Folio y logística actualizados correctamente' });
   } catch (error) {
     console.error('Error al actualizar folio:', error);
     res.status(500).json({ error: 'Error al actualizar el pedido', details: error.message });
   }
 });
 
-// Endpoint para actualizar un Backorder específico
 app.put('/api/backorders/:id', async (req, res) => {
   const { id } = req.params;
-  const { pendiente, estado } = req.body;
+  const { pendiente, estado, driverName, unitInfo, routeInfo, deliveryNotes, deliveredQty, billingStatus, deliveredAt } = req.body;
 
   try {
+    const dataToUpdate = {};
+    if (pendiente !== undefined) dataToUpdate.pendiente = parseInt(pendiente);
+    if (estado !== undefined) dataToUpdate.estado = estado;
+    if (driverName !== undefined) dataToUpdate.driverName = driverName;
+    if (unitInfo !== undefined) dataToUpdate.unitInfo = unitInfo;
+    if (routeInfo !== undefined) dataToUpdate.routeInfo = routeInfo;
+    if (deliveryNotes !== undefined) dataToUpdate.deliveryNotes = deliveryNotes;
+    if (deliveredQty !== undefined) dataToUpdate.deliveredQty = parseInt(deliveredQty);
+    if (billingStatus !== undefined) dataToUpdate.billingStatus = billingStatus;
+    if (deliveredAt !== undefined) dataToUpdate.deliveredAt = deliveredAt ? new Date(deliveredAt) : null;
+
     const updatedBackorder = await prisma.backorder.update({
       where: { id: parseInt(id) },
-      data: {
-        pendiente: parseInt(pendiente),
-        estado: estado
-      }
+      data: dataToUpdate
     });
     res.json(updatedBackorder);
   } catch (error) {
@@ -236,7 +303,7 @@ app.get('/api/products', async (req, res) => {
 
 // Crear un nuevo producto
 app.post('/api/products', async (req, res) => {
-  const { name, desc, category, quantity, cost, margin, price, tax } = req.body;
+  const { name, desc, category, quantity, cost, margin, price, tax, minStock, image } = req.body;
   try {
     const newProduct = await prisma.product.create({
       data: {
@@ -247,7 +314,9 @@ app.post('/api/products', async (req, res) => {
         cost: parseFloat(cost) || 0,
         margin: parseFloat(margin) || 0,
         price: parseFloat(price) || 0,
-        tax: parseFloat(tax) || 0
+        tax: (tax !== undefined) ? parseFloat(tax) : 16.0,
+        minStock: parseInt(minStock) || 10,
+        image
       }
     });
     res.json(newProduct);
@@ -259,7 +328,7 @@ app.post('/api/products', async (req, res) => {
 // Actualizar un producto existente
 app.put('/api/products/:id', async (req, res) => {
   const { id } = req.params;
-  const { name, desc, category, quantity, cost, margin, price, tax } = req.body;
+  const { name, desc, category, quantity, cost, margin, price, tax, minStock, image } = req.body;
   try {
     const updatedProduct = await prisma.product.update({
       where: { id: parseInt(id) },
@@ -271,7 +340,9 @@ app.put('/api/products/:id', async (req, res) => {
         cost: parseFloat(cost) || 0,
         margin: parseFloat(margin) || 0,
         price: parseFloat(price) || 0,
-        tax: parseFloat(tax) || 0
+        tax: (tax !== undefined) ? parseFloat(tax) : 16.0,
+        minStock: parseInt(minStock) || 10,
+        image
       }
     });
     res.json(updatedProduct);
@@ -280,15 +351,17 @@ app.put('/api/products/:id', async (req, res) => {
   }
 });
 
-// Eliminar un producto
-// Eliminar un producto
 app.patch('/api/products/:id/stock', async (req, res) => {
   const { id } = req.params;
-  const { decrementBy } = req.body;
+  const { decrementBy, incrementBy } = req.body;
   try {
+    const data = {};
+    if (decrementBy) data.quantity = { decrement: parseInt(decrementBy) };
+    if (incrementBy) data.quantity = { increment: parseInt(incrementBy) };
+
     const updated = await prisma.product.update({
       where: { id: parseInt(id) },
-      data: { quantity: { decrement: parseInt(decrementBy) || 0 } }
+      data: data
     });
     res.json(updated);
   } catch (error) {
@@ -398,7 +471,14 @@ app.put('/api/prospects/:id', async (req, res) => {
   
   try {
     const dataToUpdate = {};
-    if (stage !== undefined) dataToUpdate.stage = stage;
+    if (stage !== undefined) {
+      dataToUpdate.stage = stage;
+      if (['Venta Completada', 'Venta Cerrada', 'Depósito (Venta)'].includes(stage) || req.body.status === 'Ganado') {
+        dataToUpdate.closedAt = new Date();
+      } else {
+        dataToUpdate.closedAt = null; // optional: reset if changed back to open
+      }
+    }
     if (isClient !== undefined) dataToUpdate.isClient = !!isClient;
     if (name !== undefined) dataToUpdate.name = name;
     if (phone !== undefined) dataToUpdate.phone = phone;
