@@ -4,7 +4,7 @@
   "description": "API Backend para AgriFlow Pro",
   "main": "src/index.js",
   "scripts": {
-    "start": "npx prisma generate && npx prisma db push && node src/index.js",
+    "start": "npx prisma generate && npx prisma db push --accept-data-loss && node src/index.js",
     "dev": "nodemon src/index.js",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push"
