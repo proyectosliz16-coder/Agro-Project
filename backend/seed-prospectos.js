@@ -13,7 +13,8 @@ async function main() {
     { name: 'Sociedad Cooperativa San José', phone: '4614443322', email: 'sanjose@coop.mx', interest: 'Sistemas de Riego', location: 'Apaseo el Alto', budget: 150000, stage: 'Negociación' },
     { name: 'Hacienda Los Laureles', phone: '4151234455', email: 'ventas@laureles.com', interest: 'Insumos Varios', location: 'San Miguel de Allende', budget: 95000, stage: 'Contacto' },
     { name: 'AgroSistemas El Bajío', phone: '4617778899', email: 'info@agrosistemas.mx', interest: 'Eclipse LD', location: 'Celaya', budget: 180000, stage: 'Evaluación' },
-    { name: 'Productores de Berries Unidos', phone: '3334445566', email: 'contacto@berries.mx', interest: 'Sustratos Premium', location: 'Jalisco', budget: 500000, stage: 'Negociación' }
+    { name: 'Productores de Berries Unidos', phone: '3334445566', email: 'contacto@berries.mx', interest: 'Sustratos Premium', location: 'Jalisco', budget: 500000, stage: 'Negociación' },
+    { name: 'RANCHO LAS 3 MARIAS', phone: '4611234567', email: 'contacto@3marias.mx', interest: 'Insumos', location: 'Celaya', budget: 120000, stage: 'Venta Cerrada', isClient: true }
   ];
 
   for (const p of prospects) {

@@ -64,17 +64,19 @@ async function main() {
 
   // 3. Crear Backorders Iniciales
   console.log('Sembrando backorders...');
+  // Opcional: Solo borrar si se desea resetear explícitamente. Por ahora lo dejamos para pruebas.
+  // await prisma.backorder.deleteMany({}); // Comentado para evitar borrado accidental de datos reales
+  
   const backordersData = [
-    { cliente: 'AGRICOLA ZARATTINI', vendedor: 'Edgar Leyton', producto: 'ECLIPSE LD 20KG', documento: 'PED-2024-001', cantidad: 150, pendiente: 0, estado: 'Completado', prioridad: '52 días' },
-    { cliente: 'AGRICOLA ZARATTINI', vendedor: 'Oficina Celaya', producto: 'TUERAS RECTAS', documento: 'PED-2024-002', cantidad: 200, pendiente: 50, estado: 'Parcial', prioridad: '42 días' },
-    { cliente: 'GENARO TREJO', vendedor: 'Magdalena Dominguez', producto: 'SUSTRATO 250L', documento: 'PED-2024-003', cantidad: 50, pendiente: 8, estado: 'Parcial', prioridad: '37 días' },
+    { cliente: 'AGRICOLA ZARATTINI', vendedor: 'Edgar Leyton', producto: 'ECLIPSE LD 20KG', documento: 'AGRO-2024-001', cantidad: 150, pendiente: 0, estado: 'Completado', prioridad: '52 días', precio: 94.38 },
+    { cliente: 'AGRICOLA ZARATTINI', vendedor: 'Oficina Celaya', producto: 'TUERAS RECTAS', documento: 'AGRO-2024-002', cantidad: 200, pendiente: 50, estado: 'Parcial', prioridad: '42 días', precio: 15.60 },
+    { cliente: 'GENARO TREJO', vendedor: 'Magdalena Dominguez', producto: 'SUSTRATO 250L', documento: 'AGRO-2024-003', cantidad: 50, pendiente: 8, estado: 'Parcial', prioridad: '37 días', precio: 54.00 },
+    { cliente: 'RANCHO LOS CABALLOS', vendedor: 'Edgar Leyton', producto: 'ECLIPSE LD 20KG', documento: 'AGRO-CAB-001', cantidad: 100, pendiente: 100, estado: 'Pendiente', prioridad: 'Alta', isNewClient: true, precio: 94.38 },
   ];
 
   for (const b of backordersData) {
-    await prisma.backorder.upsert({
-      where: { documento: b.documento },
-      update: b,
-      create: b
+    await prisma.backorder.create({
+      data: b
     });
   }
 

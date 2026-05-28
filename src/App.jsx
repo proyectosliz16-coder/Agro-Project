@@ -4,6 +4,7 @@ import autoTable from 'jspdf-autotable';
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 import { AGRIFLOW_LOGO } from './logo_data.js';
+import { generatePremiumPDF } from './utils/pdfGenerator.js';
 import {
   Pencil,
   Trash2,
@@ -65,7 +66,10 @@ import {
   CreditCard,
   FileWarning,
   FileX,
-  Sliders
+  Sliders,
+  Layers,
+  Scale,
+  Box
 } from 'lucide-react';
 
 const GlobalStyles = () => (
@@ -458,24 +462,15 @@ function BackordersModule({ onBack, user, refreshAllData, onEditOrder, isNewClie
   };
 
   const filteredData = (backorders || []).filter(bo => {
-    // Determinar dinámicamente si el cliente tiene un historial de venta ganada/cerrada o si ya es cliente recurrente
+    // Determinar si la orden pertenece a un cliente o a un prospecto
     const clientName = (bo.cliente || '').trim().toLowerCase();
-    
-    let isNew = !!bo.isNewClient;
-    if (clientName && clientName !== 'venta directa') {
-      const prospectMatch = (prospects || []).find(p => p.name.trim().toLowerCase() === clientName);
-      const hasClosedSaleInCRM = prospectMatch && (prospectMatch.isClient || prospectMatch.stage === 'Venta Cerrada' || prospectMatch.stage === 'Venta Completada');
-      const hasExistingClosedRecord = (backorders || []).some(
-        x => x.cliente.trim().toLowerCase() === clientName && x.isNewClient === false
-      );
-      if (hasClosedSaleInCRM || hasExistingClosedRecord) {
-        isNew = false;
-      }
-    } else {
-      isNew = false; // Venta Directa o sin nombre siempre va a Backorders
-    }
+    const prospectMatch = (prospects || []).find(p => p.name.trim().toLowerCase() === clientName);
+    const isClientOrder = prospectMatch ? prospectMatch.isClient : true;
 
-    const matchesType = isNewClientFilter ? isNew : !isNew;
+    // Pedidos (isNewClientFilter === true) -> Muestra solo Prospectos (isClientOrder === false)
+    // Backorders (isNewClientFilter === false) -> Muestra solo Clientes (isClientOrder === true)
+    const matchesType = isNewClientFilter ? !isClientOrder : isClientOrder;
+
     const searchStr = (filterCliente || "").toLowerCase();
     const matchesSearch = (bo.cliente || "").toLowerCase().includes(searchStr) || (bo.documento || "").toLowerCase().includes(searchStr);
     const isNotLost = bo.estado !== 'Perdido' && bo.estado !== 'Cancelado';
@@ -633,8 +628,6 @@ function BackordersModule({ onBack, user, refreshAllData, onEditOrder, isNewClie
                             <span style={{ color: '#16a34a' }}>{order.documento}</span>
                             <button
                               onClick={() => {
-                                const doc = new jsPDF();
-                                // IMPORTANTE: Filtrar los items usando la misma lógica de folio que el reduce
                                 const curFolio = order.documento;
                                 const items = backorders.filter(it => {
                                   const itFolio = it.documento || `AGRO-${it.id}`;
@@ -646,36 +639,51 @@ function BackordersModule({ onBack, user, refreshAllData, onEditOrder, isNewClie
                                   return;
                                 }
 
-                                doc.addImage(AGRIFLOW_LOGO, 'PNG', 15, 15, 40, 20);
-                                doc.setFontSize(22); doc.setTextColor(45, 90, 63);
-                                doc.text('DETALLE DE PEDIDO', 105, 28);
-                                doc.setFontSize(10); doc.setTextColor(100);
-                                doc.text(`Folio: ${order.documento}`, 105, 36);
-                                doc.text(`Fecha: ${new Date().toLocaleDateString()}`, 105, 41);
-                                doc.setDrawColor(45, 90, 63); doc.line(15, 52, 195, 52);
-                                doc.setFontSize(12); doc.setTextColor(0); doc.text('INFORMACIÓN DE VENTA', 15, 65);
-                                doc.setFontSize(10); doc.text(`Cliente: ${order.cliente}`, 15, 73);
-                                doc.text(`Atendió: ${order.vendedor || 'Sistema'}`, 15, 78);
-
-                                const bTab = items.map(it => [
-                                  it.producto || 'Sin descripción',
-                                  it.cantidad || 0,
-                                  `$${(it.precio || 0).toLocaleString('es-MX')}`,
-                                  `$${((it.precio || 0) * (it.cantidad || 0)).toLocaleString('es-MX')}`
-                                ]);
-
                                 const tV = items.reduce((s, it) => s + ((it.precio || 0) * (it.cantidad || 0)), 0);
+                                const tax = tV * 0.16;
 
-                                autoTable(doc, {
-                                  startY: 88,
-                                  head: [['PRODUCTO', 'CANT.', 'PRECIO UNIT.', 'SUBTOTAL']],
-                                  body: bTab,
-                                  theme: 'striped',
-                                  headStyles: { fillColor: [45, 90, 63] },
-                                  foot: [['', '', 'TOTAL NETO:', `$${tV.toLocaleString('es-MX')}`]],
-                                  footStyles: { fillColor: [45, 90, 63], textColor: [255, 255, 255], fontStyle: 'bold' }
+                                generatePremiumPDF({
+                                  logoBase64: AGRIFLOW_LOGO,
+                                  title: "DETALLE DE PEDIDO",
+                                  filename: `AGRO-Pedido_${curFolio}.pdf`,
+                                  headerDetails: [
+                                    { label: 'Folio:', value: `#${curFolio}` },
+                                    { label: 'Fecha de pedido:', value: new Date(items[0].createdAt || Date.now()).toLocaleDateString('es-MX') },
+                                    { label: 'Entrega Est.:', value: items[0].fechaEntrega ? new Date(items[0].fechaEntrega).toLocaleDateString('es-MX') : 'N/A' }
+                                  ],
+                                  cards: [
+                                    { title: "CLIENTE", value: order.cliente, sub: "Cliente registrado" },
+                                    { title: "ATENDIÓ", value: order.vendedor || 'Sistema', sub: "Ejecutivo de ventas" },
+                                    { title: "ENTREGA", value: "Dirección del Cliente", sub: "Instalaciones registradas" }
+                                  ],
+                                  table: {
+                                    head: [['#', 'PRODUCTO', 'CANT.', 'PRECIO UNIT.', 'SUBTOTAL']],
+                                    body: items.map((it, idx) => [
+                                      idx + 1,
+                                      it.producto || 'Sin descripción',
+                                      it.cantidad || 0,
+                                      `$${(it.precio || 0).toLocaleString('es-MX', {minimumFractionDigits: 2})}`,
+                                      `$${((it.precio || 0) * (it.cantidad || 0)).toLocaleString('es-MX', {minimumFractionDigits: 2})}`
+                                    ])
+                                  },
+                                  summary: {
+                                    left: [
+                                      { label: "Total de productos:", value: items.length.toString() },
+                                      { label: "Total de piezas:", value: items.reduce((s, it) => s + (it.cantidad || 0), 0).toString() }
+                                    ],
+                                    right: [
+                                      { label: "Subtotal", value: `$${tV.toLocaleString('es-MX', {minimumFractionDigits: 2})}` },
+                                      { label: "IVA (16%)", value: `$${tax.toLocaleString('es-MX', {minimumFractionDigits: 2})}` },
+                                      { label: "TOTAL NETO", value: `$${(tV + tax).toLocaleString('es-MX', {minimumFractionDigits: 2})}`, isTotal: true, color: "#16a34a" }
+                                    ]
+                                  },
+                                  bottomBlocks: [
+                                    {
+                                      title: 'NOTAS DE ENTREGA',
+                                      content: "La entrega se realizará directamente en la dirección del cliente.\nFavor de comunicar 30 minutos antes de la llegada."
+                                    }
+                                  ]
                                 });
-                                doc.save(`Pedido_${order.documento}.pdf`);
                               }}
                               style={{ border: 'none', background: '#f8fafc', color: '#ef4444', cursor: 'pointer', padding: '4px', borderRadius: '4px', display: 'flex' }}
                               title="Descargar PDF"
@@ -892,58 +900,50 @@ function CotizadorModule({ onBack, onNavigate, products, setProducts, refreshAll
 
   const handleDownloadReport = () => {
     try {
-      const doc = new jsPDF();
-      const now = new Date().toLocaleString('es-MX');
-
-      // Estilo Corporativo AgriFlow Pro
-      doc.setFontSize(24);
-      doc.setTextColor(45, 90, 63); // Verde AgriFlow
-      doc.text('AgriFlow Pro', 14, 25);
-      
-      doc.setFontSize(14);
-      doc.setTextColor(51, 65, 85);
-      doc.text('REPORTE OFICIAL DE INVENTARIO Y STOCK', 14, 35);
-
-      // Metadata
-      doc.setFontSize(10);
-      doc.setTextColor(100);
-      doc.text(`Generado por: ${user?.name || 'Sistema'}`, 14, 45);
-      doc.text(`Fecha de Impresión: ${now}`, 14, 50);
-
-      // Resumen de KPI
       const totalVal = products.reduce((sum, p) => sum + (parseFloat(p.price || 0) * parseFloat(p.quantity || 0)), 0);
       const lowStockCount = products.filter(p => parseInt(p.quantity) <= (parseInt(p.minStock) || 10)).length;
-      doc.text(`Total de Productos: ${products.length}`, 14, 60);
-      doc.text(`Valor Total del Almacén: $${totalVal.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`, 14, 65);
-      doc.text(`Productos en Alerta de Stock Bajo: ${lowStockCount}`, 14, 70);
-
-      // Tabla de Datos
-      autoTable(doc, {
-        startY: 78,
-        head: [['Producto', 'Categoría', 'Stock', 'Min Stock', 'Costo', 'IVA', 'Precio Venta', 'Valor Total']],
-        body: products.map(p => [
-          p.name,
-          p.category || 'General',
-          p.quantity,
-          p.minStock || 10,
-          `$${parseFloat(p.cost || 0).toFixed(2)}`,
-          `${p.tax || 16}%`,
-          `$${parseFloat(p.price || 0).toFixed(2)}`,
-          `$${(parseFloat(p.price || 0) * parseFloat(p.quantity || 0)).toLocaleString('es-MX', { minimumFractionDigits: 2 })}`
-        ]),
-        theme: 'striped',
-        headStyles: { fillColor: [45, 90, 63] },
-        footStyles: { fillColor: [248, 250, 252], textColor: [45, 90, 63], fontStyle: 'bold' }
+      
+      generatePremiumPDF({
+        logoBase64: AGRIFLOW_LOGO,
+        title: "INVENTARIO Y STOCK",
+        filename: `AGRO-Reporte_Inventario_${new Date().toISOString().slice(0, 10)}.pdf`,
+        headerDetails: [
+          { label: 'Folio:', value: '#INV-' + new Date().getTime().toString().slice(-6) },
+          { label: 'Fecha:', value: new Date().toLocaleDateString('es-MX') }
+        ],
+        cards: [
+          { title: "PRODUCTOS", value: products.length.toString(), sub: "Registrados en sistema" },
+          { title: "VALOR ALMACÉN", value: `$${totalVal.toLocaleString('es-MX', {minimumFractionDigits: 2})}`, sub: "Precio Venta" },
+          { title: "STOCK BAJO", value: lowStockCount.toString(), sub: "Por debajo del mínimo" }
+        ],
+        table: {
+          head: [['PRODUCTO', 'CATEGORÍA', 'STOCK', 'MIN', 'COSTO', 'PRECIO', 'IVA', 'VALOR TOTAL']],
+          body: products.map(p => {
+            const taxVal = (p.tax !== undefined && p.tax !== null && p.tax !== '') ? p.tax : 16;
+            return [
+              p.name,
+              p.category || 'General',
+              p.quantity,
+              p.minStock || 10,
+              `$${parseFloat(p.cost || 0).toLocaleString('es-MX', {minimumFractionDigits: 2})}`,
+              `$${parseFloat(p.price || 0).toLocaleString('es-MX', {minimumFractionDigits: 2})}`,
+              `${taxVal}%`,
+              `$${(parseFloat(p.price || 0) * parseFloat(p.quantity || 0)).toLocaleString('es-MX', {minimumFractionDigits: 2})}`
+            ];
+          })
+        },
+        summary: {
+          right: [
+            { label: "VALOR TOTAL", value: `$${totalVal.toLocaleString('es-MX', {minimumFractionDigits: 2})}`, isTotal: true, color: "#16a34a" }
+          ]
+        },
+        bottomBlocks: [
+          {
+            title: 'NOTAS DEL REPORTE',
+            content: "Documento de control interno de AgriFlow Pro.\nEl valor total se calcula usando el Precio de Venta por el Stock disponible."
+          }
+        ]
       });
-
-      const finalY = doc.lastAutoTable.finalY + 15;
-      doc.setFontSize(9);
-      doc.setTextColor(150);
-      doc.text('Este documento es un reporte interno oficial de AgriFlow Pro.', 14, finalY);
-
-      // Guardar PDF
-      const formattedDate = new Date().toISOString().slice(0, 10);
-      doc.save(`Reporte_Inventario_${formattedDate}.pdf`);
     } catch (error) {
       console.error('Error generando reporte:', error);
       alert('Hubo un error al generar el reporte en PDF.');
@@ -1776,60 +1776,103 @@ function KpisModule({ onBack, sellers, setSellers, refreshSellers, prospects, ba
           const isCurrentMonth = date => date ? new Date(date) >= startOfCurrentMonth : true;
           const isLastMonth = date => { const d = new Date(date); return d >= startOfLastMonth && d < startOfCurrentMonth; };
 
-          const isWon = p => p.stage === 'Venta Completada' || p.status === 'Ganado' || p.stage === 'Venta Cerrada' || p.stage === 'Depósito (Venta)';
+          const isWonProspect = p => p.stage === 'Venta Completada' || p.status === 'Ganado' || p.stage === 'Venta Cerrada' || p.stage === 'Depósito (Venta)';
+          const isWonBO = b => b.estado !== 'Cotización' && b.estado !== 'Perdido' && b.estado !== 'Cancelado';
+          
+          const boValue = (boArray) => {
+            return expandOrderItems(boArray).reduce((sum, it) => sum + ((parseFloat(it.precio) || 0) * (it.pedidoOri || 0)), 0);
+          };
 
-          // PIPELINE ACTIVO (Global, es una "foto" actual, no importa cuándo se creó)
-          const activePipelineCurrent = prospects.filter(p => !isWon(p) && p.stage !== 'Perdido');
-          const valorPipeline = Math.round(activePipelineCurrent.reduce((sum, p) => sum + (parseFloat(p.budget) || 0), 0));
-          const trendPipeline = 0; // Sin historial para comparar exactamente con el mes anterior
+          // PIPELINE ACTIVO (Global)
+          const activeProspects = prospects.filter(p => !isWonProspect(p) && p.stage !== 'Perdido');
+          const activeBOs = (backorders || []).filter(b => b.estado === 'Cotización');
+          const valorPipeline = Math.round(activeProspects.reduce((sum, p) => sum + (parseFloat(p.budget) || 0), 0) + boValue(activeBOs));
+          const trendPipeline = 0; 
 
-          // TASA DE CONVERSIÓN GLOBAL (Ganados vs Total de Prospectos)
-          const totalGanados = prospects.filter(isWon);
-          const tasaConversion = prospects.length > 0 ? Math.round((totalGanados.length / prospects.length) * 100) : 0;
-          const trendTasaConversion = 0; // Simplificado para mostrar el real global
+          // TASA DE CONVERSIÓN GLOBAL
+          const totalGanadosProspects = prospects.filter(isWonProspect).length;
+          const totalGanadosBOs = (backorders || []).filter(isWonBO).length;
+          const totalTratos = prospects.length + (backorders || []).filter(b => b.estado !== 'Cotización').length;
+          const tasaConversion = totalTratos > 0 ? Math.round(((totalGanadosProspects + totalGanadosBOs) / totalTratos) * 100) : 0;
+          const trendTasaConversion = 0;
 
           // GANADOS Y PERDIDOS (Mes actual vs Mes Anterior para comparar cierres)
-          const ganadosActuales = prospects.filter(p => (p.closedAt ? isCurrentMonth(p.closedAt) : isCurrentMonth(p.createdAt)) && isWon(p));
-          const ganadosAnteriores = prospects.filter(p => (p.closedAt ? isLastMonth(p.closedAt) : isLastMonth(p.createdAt)) && isWon(p));
+          const ganadosProspectsAct = prospects.filter(p => (p.closedAt ? isCurrentMonth(p.closedAt) : isCurrentMonth(p.createdAt)) && isWonProspect(p));
+          const ganadosBOsAct = (backorders || []).filter(b => isCurrentMonth(b.createdAt) && isWonBO(b));
+          const ganadosActuales = [...ganadosProspectsAct, ...ganadosBOsAct];
+          
+          const ganadosProspectsAnt = prospects.filter(p => (p.closedAt ? isLastMonth(p.closedAt) : isLastMonth(p.createdAt)) && isWonProspect(p));
+          const ganadosBOsAnt = (backorders || []).filter(b => isLastMonth(b.createdAt) && isWonBO(b));
+          const ganadosAnteriores = [...ganadosProspectsAnt, ...ganadosBOsAnt];
 
-          const perdidosActuales = prospects.filter(p => p.stage === 'Perdido' && (p.closedAt ? isCurrentMonth(p.closedAt) : isCurrentMonth(p.createdAt)));
-          const perdidosAnteriores = prospects.filter(p => p.stage === 'Perdido' && (p.closedAt ? isLastMonth(p.closedAt) : isLastMonth(p.createdAt)));
+          // Perdidos: ignoramos fecha para que SIEMPRE aparezcan si están en Perdido o Cancelado
+          const perdidosProspectsAct = prospects.filter(p => p.stage === 'Perdido');
+          const perdidosBOsAct = (backorders || []).filter(b => b.estado === 'Perdido' || b.estado === 'Cancelado');
+          const perdidosActuales = [...perdidosProspectsAct, ...perdidosBOsAct];
+          const perdidosAnteriores = [];
 
           const pagadosActuales = carteraList.filter(c => c.status === 'Pagado' && isCurrentMonth(c.createdAt));
           const pagadosAnteriores = carteraList.filter(c => c.status === 'Pagado' && isLastMonth(c.createdAt));
 
-          const ticketPromedio = pagadosActuales.length > 0 ? Math.round(pagadosActuales.reduce((sum, c) => sum + (c.amount || 0), 0) / pagadosActuales.length) : 0;
+const ticketPromedio = pagadosActuales.length > 0 ? Math.round(pagadosActuales.reduce((sum, c) => sum + (c.amount || 0), 0) / pagadosActuales.length) : 0;
           const ticketPromedioAnt = pagadosAnteriores.length > 0 ? Math.round(pagadosAnteriores.reduce((sum, c) => sum + (c.amount || 0), 0) / pagadosAnteriores.length) : 0;
           const trendTicket = ticketPromedioAnt > 0 ? Math.round(((ticketPromedio - ticketPromedioAnt) / ticketPromedioAnt) * 100) : 0;
 
           const cicloVenta = ganadosActuales.length > 0 ? Math.round(ganadosActuales.reduce((sum, p) => sum + Math.max(1, (new Date() - new Date(p.createdAt)) / (1000 * 60 * 60 * 24)), 0) / ganadosActuales.length) : 0;
           const cicloVentaAnt = ganadosAnteriores.length > 0 ? Math.round(ganadosAnteriores.reduce((sum, p) => sum + Math.max(1, (new Date() - new Date(p.createdAt)) / (1000 * 60 * 60 * 24)), 0) / ganadosAnteriores.length) : 0;
-          const trendCiclo = cicloVenta - cicloVentaAnt;
-
+          const trendCiclo = cicloVentaAnt > 0 ? Math.round(((cicloVenta - cicloVentaAnt) / cicloVentaAnt) * 100) : 0;
           const trendGanados = ganadosAnteriores.length > 0 ? Math.round(((ganadosActuales.length - ganadosAnteriores.length) / ganadosAnteriores.length) * 100) : (ganadosActuales.length > 0 ? 100 : 0);
           const trendPerdidos = perdidosAnteriores.length > 0 ? Math.round(((perdidosActuales.length - perdidosAnteriores.length) / perdidosAnteriores.length) * 100) : (perdidosActuales.length > 0 ? 100 : 0);
 
-          const funnelDataRaw = [
-            { title: 'Prospectos / Contacto', stageFilter: ['Contacto', 'Llamada', 'Agendar Cita', 'Evaluación'] },
-            { title: 'Cotizaciones', stageFilter: ['Cotizarle', 'Cotización'] },
-            { title: 'Negociación', stageFilter: ['Negociación'] },
-            { title: 'Cierres', stageFilter: ['Venta Cerrada', 'Venta Completada', 'Depósito (Venta)', 'Nuevo Cliente'] }
-          ].map(f => {
-            // El primer grupo sirve como catch-all para etapas nuevas no clasificadas que siguen activas
-            const amount = prospects.filter(p => {
-              if (f.title === 'Cierres') return isWon(p) || p.stage === 'Nuevo Cliente' || p.status === 'Ganado';
-              if (f.title === 'Cotizaciones') return f.stageFilter.includes(p.stage);
-              if (f.title === 'Negociación') return f.stageFilter.includes(p.stage);
-              if (f.title === 'Prospectos / Contacto') {
-                return !isWon(p) && p.stage !== 'Perdido' && !['Cotizarle', 'Cotización', 'Negociación', 'Nuevo Cliente'].includes(p.stage);
-              }
-              return false;
-            }).reduce((sum, p) => sum + (parseFloat(p.budget) || 0), 0);
-            return { ...f, amount };
-          });
-          const totalFunnel = funnelDataRaw.reduce((sum, f) => sum + f.amount, 0) || 1;
+          const prospectStagesNames = ['Contacto', 'Agendar Cita', 'Cotizarle', 'Negociación', 'Depósito (Venta)', 'Recibir Pedido', 'Venta Completada', 'Venta Cerrada', 'Nuevo Cliente', 'Ganado', 'Perdido'];
+          const clientStagesNames = ['Contacto', 'Negociación', 'Depósito (Venta)', 'Recibir Pedido', 'Por Menores', 'Venta Completada', 'Venta Cerrada', 'Nuevo Cliente', 'Ganado', 'Perdido', 'Cancelado'];
 
-          const FunnelStage = ({ color, width, percentage, title, amount }) => (
+          const funnelProspectos = [
+            { title: 'Contacto', stageFilter: ['Contacto'] },
+            { title: 'Agendar Cita', stageFilter: ['Agendar Cita'] },
+            { title: 'Cotizarle', stageFilter: ['Cotizarle'] },
+            { title: 'Negociación', stageFilter: ['Negociación'] },
+            { title: 'Depósito (Venta)', stageFilter: ['Depósito (Venta)'] },
+            { title: 'Recibir Pedido', stageFilter: ['Recibir Pedido'] },
+            { title: 'Venta Completada', stageFilter: ['Venta Completada', 'Venta Cerrada', 'Nuevo Cliente', 'Ganado'] },
+            { title: 'Perdido', stageFilter: ['Perdido'] }
+          ].map(f => {
+            const amount = prospects.filter(p => !p.isClient).filter(p => {
+              if (f.title === 'Venta Completada' && (isWonProspect(p) || p.stage === 'Nuevo Cliente' || p.status === 'Ganado')) return true;
+              if (f.title === 'Contacto' && (!p.stage || p.stage === '' || !prospectStagesNames.includes(p.stage))) return true;
+              return f.stageFilter.includes(p.stage);
+            }).reduce((sum, p) => sum + (parseFloat(p.budget) || 0), 0);
+            return { ...f, amount, count: prospects.filter(p => !p.isClient).filter(p => {
+              if (f.title === 'Venta Completada' && (isWonProspect(p) || p.stage === 'Nuevo Cliente' || p.status === 'Ganado')) return true;
+              if (f.title === 'Contacto' && (!p.stage || p.stage === '' || !prospectStagesNames.includes(p.stage))) return true;
+              return f.stageFilter.includes(p.stage);
+            }).length };
+          });
+          const totalProspectos = funnelProspectos.reduce((sum, f) => sum + f.amount, 0) || 1;
+
+          const funnelClientes = [
+            { title: 'Contacto', stageFilter: ['Contacto'] },
+            { title: 'Negociación', stageFilter: ['Negociación'] },
+            { title: 'Depósito (Venta)', stageFilter: ['Depósito (Venta)'] },
+            { title: 'Recibir Pedido', stageFilter: ['Recibir Pedido'] },
+            { title: 'Por Menores', stageFilter: ['Por Menores'] },
+            { title: 'Venta Completada', stageFilter: ['Venta Completada', 'Venta Cerrada', 'Nuevo Cliente', 'Ganado'] },
+            { title: 'Perdido', stageFilter: ['Perdido'] }
+          ].map(f => {
+            let amount = 0;
+            // Solo logica de CRM (pipelines), no mezclar con backorders
+            const filteredProspects = prospects.filter(p => p.isClient).filter(p => {
+              if (f.title === 'Venta Completada' && (isWonProspect(p) || p.stage === 'Nuevo Cliente' || p.status === 'Ganado')) return true;
+              if (f.title === 'Contacto' && (!p.stage || p.stage === '' || !clientStagesNames.includes(p.stage))) return true;
+              return f.stageFilter.includes(p.stage);
+            });
+            amount += filteredProspects.reduce((sum, p) => sum + (parseFloat(p.budget) || 0), 0);
+            
+            return { ...f, amount, count: filteredProspects.length };
+          });
+          const totalClientes = funnelClientes.reduce((sum, f) => sum + f.amount, 0) || 1;
+
+          const FunnelStage = ({ color, width, percentage, title, amount, count }) => (
             <div style={{ display: 'flex', alignItems: 'center', marginBottom: '4px', gap: '16px' }}>
               <div style={{ width: '200px', display: 'flex', justifyContent: 'center' }}>
                 <div style={{
@@ -1842,27 +1885,24 @@ function KpisModule({ onBack, sellers, setSellers, refreshSellers, prospects, ba
                   color: '#fff',
                   fontWeight: 800,
                   fontSize: '0.9rem',
-                  clipPath: 'polygon(5% 0, 95% 0, 100% 100%, 0% 100%)' // Subtle trapezoid
+                  clipPath: 'polygon(5% 0, 95% 0, 100% 100%, 0% 100%)'
                 }}>
                   {percentage}
                 </div>
               </div>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: '0.85rem', color: '#1e293b', fontWeight: 700 }}>{title}</div>
+                <div style={{ fontSize: '0.85rem', color: '#1e293b', fontWeight: 700, display: 'flex', gap: '6px', alignItems: 'center' }}>
+                  {title} <span style={{ background: '#f1f5f9', color: '#64748b', padding: '2px 6px', borderRadius: '12px', fontSize: '0.7rem' }}>{count}</span>
+                </div>
                 <div style={{ fontSize: '0.85rem', color: '#64748b' }}>${amount.toLocaleString('es-MX')}</div>
               </div>
             </div>
           );
 
-
-
           return (
             <div style={{ background: '#f8fafc', minHeight: '100vh', padding: '0 0 60px 0' }}>
               <ViewHeader title="Rendimiento Comercial" onBack={() => setActiveTab('Dashboard')} />
-
               <div style={{ maxWidth: '1400px', margin: '0 auto', width: '100%', padding: '40px 32px' }}>
-
-                {/* HEADER CON STATS (ESTILO PREMIUM) */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '40px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
                     <div style={{ background: '#6366f1', padding: '16px', borderRadius: '16px', boxShadow: '0 10px 25px -5px rgba(99, 102, 241, 0.3)' }}>
@@ -1873,7 +1913,6 @@ function KpisModule({ onBack, sellers, setSellers, refreshSellers, prospects, ba
                       <p style={{ color: '#64748b', fontSize: '0.95rem', margin: '4px 0 0 0', fontWeight: 500 }}>Análisis de pipeline, tasas de conversión y desempeño de ventas.</p>
                     </div>
                   </div>
-
                   <div style={{ display: 'flex', gap: '16px' }}>
                     {[
                       { label: 'Conversión', val: `${tasaConversion}%`, sub: 'Meta: 60%', icon: Target, color: '#16a34a', bg: '#f0fdf4' },
@@ -1893,13 +1932,8 @@ function KpisModule({ onBack, sellers, setSellers, refreshSellers, prospects, ba
                     ))}
                   </div>
                 </div>
-
-                {/* CONTENIDO (CARDS EXISTENTES) */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-                  {/* TOP CARDS ROW */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px' }}>
-
-                    {/* 1. Tasa de Conversión */}
                     <div style={{ background: '#fff', borderRadius: '16px', padding: '24px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                         <h4 style={{ margin: 0, fontSize: '0.95rem', color: '#334155', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -2049,48 +2083,32 @@ function KpisModule({ onBack, sellers, setSellers, refreshSellers, prospects, ba
                       </div>
                     </div>
 
-                    {/* 2. Top Vendedores */}
+                    {/* 2. Distribución del Pipeline: Clientes */}
                     <div style={{ background: '#fff', borderRadius: '16px', padding: '24px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)', display: 'flex', flexDirection: 'column' }}>
                       <h4 style={{ margin: '0 0 20px 0', fontSize: '0.95rem', color: '#334155', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        Top Vendedores <Info size={14} color="#cbd5e1" />
+                        Embudo: Clientes (Pedidos) <Info size={14} color="#cbd5e1" />
                       </h4>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', flex: 1, maxHeight: showFullRanking ? '300px' : 'none', overflowY: showFullRanking ? 'auto' : 'visible', paddingRight: showFullRanking ? '8px' : '0' }}>
-                        {visibleSellers.sort((a, b) => (b.sales || 0) - (a.sales || 0)).slice(0, showFullRanking ? visibleSellers.length : 3).map((s, idx) => (
-                          <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                              <span style={{ width: '20px', height: '20px', borderRadius: '50%', background: idx === 0 ? '#fef08a' : idx === 1 ? '#e2e8f0' : '#ffedd5', color: idx === 0 ? '#ca8a04' : idx === 1 ? '#64748b' : '#c2410c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', fontWeight: 800 }}>{idx + 1}</span>
-                              <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#cbd5e1', overflow: 'hidden' }}>
-                                <img src={s.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(s.name)}&background=random`} alt={s.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                              </div>
-                              <span style={{ fontSize: '0.9rem', fontWeight: 700, color: '#1e293b' }}>{s.name.split(' ')[0]}</span>
-                            </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                              <span style={{ fontSize: '0.9rem', fontWeight: 800, color: '#0f172a' }}>${Math.round(s.sales || 0).toLocaleString('es-MX')}</span>
-                              <span style={{ fontSize: '0.75rem', fontWeight: 700, color: idx === 2 ? '#ef4444' : '#10b981', display: 'flex', alignItems: 'center', width: '35px', justifyContent: 'flex-end' }}>
-                                {idx === 2 ? <ArrowDownRight size={12} /> : <ArrowUpRight size={12} />} {idx === 0 ? '15' : idx === 1 ? '8' : '4'}%
-                              </span>
-                            </div>
-                          </div>
-                        ))}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start', paddingLeft: '8px', flex: 1, justifyContent: 'center' }}>
+                        {funnelClientes.filter(f => f.amount > 0).map((f, i) => {
+                          const colors = ['#3b82f6', '#0ea5e9', '#06b6d4', '#14b8a6', '#10b981', '#84cc16', '#ef4444'];
+                          const percentage = Math.round((f.amount / totalClientes) * 100) || 0;
+                          const width = Math.max(15, percentage) + '%';
+                          return <FunnelStage key={i} color={colors[i % colors.length]} width={width} percentage={percentage + '%'} title={f.title} amount={f.amount} count={f.count} />;
+                        })}
                       </div>
-                      {visibleSellers.length > 3 && (
-                        <button onClick={() => setShowFullRanking(!showFullRanking)} style={{ width: '100%', padding: '10px', background: 'transparent', border: '1px solid #e2e8f0', borderRadius: '8px', color: '#64748b', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer', marginTop: '16px' }}>
-                          {showFullRanking ? 'Ocultar ranking' : 'Ver ranking completo >'}
-                        </button>
-                      )}
                     </div>
 
-                    {/* 3. Distribución del Pipeline por Etapa */}
-                    <div style={{ background: '#fff', borderRadius: '16px', padding: '24px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)' }}>
+                    {/* 3. Distribución del Pipeline: Prospectos */}
+                    <div style={{ background: '#fff', borderRadius: '16px', padding: '24px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)', display: 'flex', flexDirection: 'column' }}>
                       <h4 style={{ margin: '0 0 20px 0', fontSize: '0.95rem', color: '#334155', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        Distribución del Pipeline por Etapa <Info size={14} color="#cbd5e1" />
+                        Embudo: Prospectos <Info size={14} color="#cbd5e1" />
                       </h4>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', alignItems: 'flex-start', paddingLeft: '20px' }}>
-                        {funnelDataRaw.map((f, i) => {
-                          const colors = ['#3b82f6', '#22c55e', '#eab308', '#a855f7', '#ec4899'];
-                          const percentage = Math.round((f.amount / totalFunnel) * 100) || 0;
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start', paddingLeft: '8px', flex: 1, justifyContent: 'center' }}>
+                        {funnelProspectos.filter(f => f.amount > 0).map((f, i) => {
+                          const colors = ['#3b82f6', '#0ea5e9', '#06b6d4', '#14b8a6', '#10b981', '#84cc16', '#eab308', '#ef4444'];
+                          const percentage = Math.round((f.amount / totalProspectos) * 100) || 0;
                           const width = Math.max(15, percentage) + '%';
-                          return <FunnelStage key={i} color={colors[i]} width={width} percentage={percentage + '%'} title={f.title} amount={f.amount} />;
+                          return <FunnelStage key={i} color={colors[i % colors.length]} width={width} percentage={percentage + '%'} title={f.title} amount={f.amount} count={f.count} />;
                         })}
                       </div>
                     </div>
@@ -2105,8 +2123,15 @@ function KpisModule({ onBack, sellers, setSellers, refreshSellers, prospects, ba
 
         {activeTab === 'Cobranza y Cartera' && (() => {
           const now = new Date();
-          const carteraPendiente = carteraList.filter(c => c.status !== 'Pagado');
-          const carteraPagada = carteraList.filter(c => c.status === 'Pagado');
+          const mappedCartera = (backorders || []).filter(b => (b.precio || 0) > 0).map(b => ({
+            client: b.cliente,
+            amount: (b.precio || 0) * (b.cantidad || 1),
+            status: b.billingStatus || 'Pendiente',
+            createdAt: b.createdAt
+          }));
+
+          const carteraPendiente = mappedCartera.filter(c => c.status !== 'Pagado');
+          const carteraPagada = mappedCartera.filter(c => c.status === 'Pagado');
 
           const totalPendiente = carteraPendiente.reduce((sum, c) => sum + (c.amount || 0), 0);
           const totalPagado = carteraPagada.reduce((sum, c) => sum + (c.amount || 0), 0);
@@ -2552,11 +2577,40 @@ function KpisModule({ onBack, sellers, setSellers, refreshSellers, prospects, ba
 
           const totalInvValue = inventoryByCategory.reduce((s, c) => s + c.value, 0) || 1;
 
-          // Clasificación de Backorders (Mock por antigüedad si no hay fechas precisas)
+          // Clasificación de Backorders basado en fechaEntrega
           const backordersPendientes = backorders.filter(b => b.pendiente > 0);
-          const criticos = backordersPendientes.filter((_, i) => i % 4 === 0).length; // 25% mock
-          const riesgo = backordersPendientes.filter((_, i) => i % 4 === 1 || i % 4 === 2).length; // 50% mock
-          const tiempo = backordersPendientes.length - criticos - riesgo;
+          
+          const hoy = new Date();
+          hoy.setHours(0, 0, 0, 0);
+          const manana = new Date(hoy);
+          manana.setDate(manana.getDate() + 1);
+
+          let criticos = 0; let riesgo = 0; let tiempo = 0;
+
+          backordersPendientes.forEach(b => {
+            if (!b.fechaEntrega) { tiempo++; return; }
+            const fechaD = new Date(b.fechaEntrega);
+            fechaD.setHours(0,0,0,0);
+            if (fechaD < hoy) { criticos++; }
+            else if (fechaD.getTime() === hoy.getTime() || fechaD.getTime() === manana.getTime()) { riesgo++; }
+            else { tiempo++; }
+          });
+          
+          // Calcular atraso promedio para el producto topBackorderProduct
+          const topProductBackorders = backordersPendientes.filter(b => b.producto === topBackorderProduct[0]);
+          let totalDiasAtrasoTop = 0; let topAtrasadosCount = 0;
+          topProductBackorders.forEach(b => {
+            if (!b.fechaEntrega) return;
+            const fechaD = new Date(b.fechaEntrega);
+            fechaD.setHours(0,0,0,0);
+            if (fechaD < hoy) {
+              const diffTime = Math.abs(hoy - fechaD);
+              const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+              totalDiasAtrasoTop += diffDays;
+              topAtrasadosCount++;
+            }
+          });
+          const atrasoPromedioTop = topAtrasadosCount > 0 ? Math.round(totalDiasAtrasoTop / topAtrasadosCount) : 0;
 
           const donutData = [
             { label: 'Críticos', value: backordersPendientes.length > 0 ? Math.round((criticos / backordersPendientes.length) * 100) : 0, color: '#ef4444' },
@@ -2688,7 +2742,7 @@ function KpisModule({ onBack, sellers, setSellers, refreshSellers, prospects, ba
                     </div>
                     <div style={{ background: '#f8fafc', padding: '10px', borderRadius: '12px' }}>
                       <span style={{ display: 'block', fontSize: '0.65rem', color: '#94a3b8', fontWeight: 700 }}>ATRASO PROMEDIO</span>
-                      <span style={{ fontSize: '1rem', fontWeight: 800 }}>4 días</span>
+                      <span style={{ fontSize: '1rem', fontWeight: 800 }}>{atrasoPromedioTop} días</span>
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: '8px' }}>
@@ -2766,7 +2820,7 @@ function KpisModule({ onBack, sellers, setSellers, refreshSellers, prospects, ba
                 <div style={{ background: '#fff', borderRadius: '24px', padding: '24px', border: '1px solid #e2e8f0' }}>
                   <h4 style={{ margin: '0 0 24px 0', fontSize: '1.1rem', fontWeight: 800, color: '#0f172a' }}>Inventario</h4>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '32px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px', marginBottom: '32px' }}>
                     <div style={{ background: '#f8fafc', padding: '16px', borderRadius: '16px' }}>
                       <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 700, display: 'block', marginBottom: '8px' }}>Valor del Inventario</span>
                       <span style={{ fontSize: '1.2rem', fontWeight: 900, color: '#0f172a' }}>${Math.round(valorInventario / 1000)}k</span>
@@ -2776,11 +2830,6 @@ function KpisModule({ onBack, sellers, setSellers, refreshSellers, prospects, ba
                       <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 700, display: 'block', marginBottom: '8px' }}>Productos Activos</span>
                       <span style={{ fontSize: '1.2rem', fontWeight: 900, color: '#0f172a' }}>{totalProducts}</span>
                       <Sparkline color="#3b82f6" />
-                    </div>
-                    <div style={{ background: '#f8fafc', padding: '16px', borderRadius: '16px' }}>
-                      <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 700, display: 'block', marginBottom: '8px' }}>Rotación</span>
-                      <span style={{ fontSize: '1.2rem', fontWeight: 900, color: '#0f172a' }}>2.3x</span>
-                      <Sparkline color="#a855f7" />
                     </div>
                   </div>
 
@@ -3339,6 +3388,9 @@ function VentasModule({ onBack, onNavigate, setQuotingProspect, user, backorders
     closureNotes: ''
   });
   const [showLocationModal, setShowLocationModal] = React.useState(false);
+  const [showLostModal, setShowLostModal] = React.useState(false);
+  const [showAppSuccessModal, setShowAppSuccessModal] = React.useState(false);
+  const [prospectToLose, setProspectToLose] = React.useState(null);
   const [locationProspect, setLocationProspect] = React.useState(null);
   const [locationForm, setLocationForm] = React.useState({ address: '', references: '', coordinates: '' });
   const [googleLink, setGoogleLink] = React.useState('');
@@ -3392,6 +3444,7 @@ function VentasModule({ onBack, onNavigate, setQuotingProspect, user, backorders
     { name: 'Agendar Cita', icon: Calendar, color: '#10b981' },
     { name: 'Cotizarle', icon: FileText, color: '#10b981' },
     { name: 'Negociación', icon: TrendingUp, color: '#f59e0b' },
+    { name: 'Depósito (Venta)', icon: DollarSign, color: '#059669' },
     { name: 'Recibir Pedido', icon: Package, color: '#3b82f6' },
     { name: 'Venta Completada', icon: CheckCircle2, color: '#059669' },
     { name: 'Perdido', icon: ShieldAlert, color: '#ef4444' }
@@ -3400,9 +3453,11 @@ function VentasModule({ onBack, onNavigate, setQuotingProspect, user, backorders
   const clientStages = [
     { name: 'Contacto', icon: Phone, color: '#10b981' },
     { name: 'Negociación', icon: FileText, color: '#10b981' },
+    { name: 'Depósito (Venta)', icon: DollarSign, color: '#059669' },
     { name: 'Recibir Pedido', icon: Package, color: '#3b82f6' },
     { name: 'Por Menores', icon: ClipboardList, color: '#10b981' },
-    { name: 'Depósito (Venta)', icon: DollarSign, color: '#059669' }
+    { name: 'Venta Completada', icon: CheckCircle2, color: '#059669' },
+    { name: 'Perdido', icon: ShieldAlert, color: '#ef4444' }
   ];
 
 
@@ -3441,11 +3496,13 @@ function VentasModule({ onBack, onNavigate, setQuotingProspect, user, backorders
 
   const updateProspectStage = async (id, newStage, isClientValue, isConversion = false) => {
     try {
-      // 1. SI PASA A RECIBIR PEDIDO, ACTIVAR LOGÍSTICA E INVENTARIO
-      if (newStage === 'Recibir Pedido') {
+      // 1. SI PASA A RECIBIR PEDIDO U OTRAS ETAPAS AVANZADAS, ACTIVAR LOGÍSTICA E INVENTARIO
+      if (['Recibir Pedido', 'Por Menores', 'Depósito (Venta)'].includes(newStage)) {
         const p = (prospects || []).find(item => item.id === id);
         if (p) {
           const draftBOs = (backorders || []).filter(bo => bo.cliente === p.name && bo.estado === 'Cotización');
+          
+          const targetEstado = newStage === 'Depósito (Venta)' ? 'Facturación' : 'Entrega Pendiente';
           
           if (draftBOs.length > 0) {
             for (const bo of draftBOs) {
@@ -3453,7 +3510,7 @@ function VentasModule({ onBack, onNavigate, setQuotingProspect, user, backorders
               await fetch(`/api/backorders/${bo.id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ...bo, estado: 'Entrega Pendiente' })
+                body: JSON.stringify({ ...bo, estado: targetEstado })
               });
             }
           } else {
@@ -3469,7 +3526,7 @@ function VentasModule({ onBack, onNavigate, setQuotingProspect, user, backorders
                 precio: p.budget || 0,
                 cantidad: 1,
                 pendiente: 1,
-                estado: 'Entrega Pendiente',
+                estado: targetEstado,
                 prioridad: 'Media',
                 isNewClient: !isClientValue
               })
@@ -3494,6 +3551,35 @@ function VentasModule({ onBack, onNavigate, setQuotingProspect, user, backorders
     } catch (e) {
       console.error(e);
       alert('Error de conexión con el servidor.');
+    }
+  };
+
+  const handleRestartPipeline = async (p) => {
+    try {
+      const res = await fetch('/api/prospects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: p.name,
+          phone: p.phone,
+          email: p.email,
+          interest: p.interest,
+          location: p.location,
+          budget: p.budget,
+          notes: (p.notes || '') + '\n\n[Sistema]: Pipeline reiniciado desde un negocio perdido.',
+          stage: 'Contacto',
+          isClient: false
+        })
+      });
+      if (res.ok) {
+        if (refreshData) refreshData();
+        alert('Se ha reiniciado el pipeline. El registro anterior se conservó como Perdido en el historial.');
+      } else {
+        alert('Error al reiniciar pipeline.');
+      }
+    } catch (e) {
+      console.error(e);
+      alert('Error de conexión.');
     }
   };
 
@@ -3726,6 +3812,10 @@ function VentasModule({ onBack, onNavigate, setQuotingProspect, user, backorders
 
   const handleSaveAppointment = async () => {
     if (!appFor) return;
+    if (!appForm.date) {
+      alert('Por favor selecciona una fecha para la cita.');
+      return;
+    }
     try {
       let h24 = parseInt(appForm.hour);
       if (appForm.period === 'PM' && h24 < 12) h24 += 12;
@@ -3744,7 +3834,7 @@ function VentasModule({ onBack, onNavigate, setQuotingProspect, user, backorders
       if (resp.ok) {
         setShowAppModal(false);
         if (refreshData) refreshData();
-        alert('Cita guardada correctamente.');
+        setShowAppSuccessModal(true);
       } else {
         alert('Error al agendar la cita.');
       }
@@ -3793,40 +3883,38 @@ function VentasModule({ onBack, onNavigate, setQuotingProspect, user, backorders
   };
 
   const handleDownloadQuote = (p) => {
-    const doc = new jsPDF();
-    const now = new Date().toLocaleString('es-MX');
-
-    doc.setFontSize(22);
-    doc.setTextColor(45, 90, 63);
-    doc.text('AgriFlow Pro - Cotización Comercial', 14, 25);
-
-    doc.setFontSize(10);
-    doc.setTextColor(100);
-    doc.text(`Fecha de generación: ${now}`, 14, 32);
-
-    doc.setFontSize(12);
-    doc.setTextColor(50);
-    doc.text(`Cliente: ${p.name}`, 14, 50);
-    doc.text(`Contacto: ${p.phone || 'N/A'} | ${p.email || 'N/A'}`, 14, 57);
-
-    autoTable(doc, {
-      startY: 70,
-      head: [['Descripción del Producto/Servicio', 'Monto Estimado', 'Moneda']],
-      body: [
-        [p.interest || 'Servicio General', `$${(p.budget || 0).toLocaleString('es-MX')}`, 'MXN']
+    generatePremiumPDF({
+      logoBase64: AGRIFLOW_LOGO,
+      title: "COTIZACIÓN COMERCIAL",
+      filename: `AGRO-Cotizacion_${p.name.replace(/\s+/g, '_')}.pdf`,
+      headerDetails: [
+        { label: 'Folio:', value: '#COT-' + new Date().getTime().toString().slice(-6) },
+        { label: 'Ejecutivo:', value: user?.name || 'Sistema' },
+        { label: 'Fecha:', value: new Date().toLocaleDateString('es-MX') }
       ],
-      theme: 'grid',
-      headStyles: { fillColor: [45, 90, 63], textColor: [255, 255, 255] },
-      styles: { fontSize: 10 }
+      cards: [
+        { title: "PROSPECTO / CLIENTE", value: p.name, sub: p.phone || 'Sin teléfono' },
+        { title: "CONTACTO", value: p.email || 'Sin correo', sub: "Vía de comunicación" },
+        { title: "INTERÉS PRINCIPAL", value: p.interest || 'Servicios', sub: "Categoría" }
+      ],
+      table: {
+        head: [['DESCRIPCIÓN DEL SERVICIO / PRODUCTO', 'MONEDA', 'MONTO ESTIMADO']],
+        body: [
+          [p.interest || 'Servicio General', 'MXN', `$${(p.budget || 0).toLocaleString('es-MX', {minimumFractionDigits: 2})}`]
+        ]
+      },
+      summary: {
+        right: [
+          { label: "MONTO APROXIMADO", value: `$${(p.budget || 0).toLocaleString('es-MX', {minimumFractionDigits: 2})}`, isTotal: true, color: "#16a34a" }
+        ]
+      },
+      bottomBlocks: [
+        {
+          title: 'TÉRMINOS Y CONDICIONES',
+          content: "Esta cotización es una estimación preliminar y tiene una vigencia de 15 días naturales.\nLos precios y condiciones pueden variar hasta la formalización del pedido."
+        }
+      ]
     });
-
-    const finalY = doc.lastAutoTable.finalY + 20;
-    doc.setFontSize(10);
-    doc.setTextColor(120);
-    doc.text('Esta cotización tiene una vigencia de 15 días naturales.', 14, finalY);
-    doc.text('AgriFlow Pro - Transformando el campo con tecnología.', 14, finalY + 7);
-
-    doc.save(`Cotizacion_${p.name.replace(/\s+/g, '_')}.pdf`);
   };
 
   const renderKanban = () => {
@@ -3947,15 +4035,7 @@ function VentasModule({ onBack, onNavigate, setQuotingProspect, user, backorders
                             >
                               Bitácora
                             </button>
-                            {idx > 0 && (
-                              <button
-                                onClick={() => updateProspectStage(p.id, config[idx - 1].name, p.isClient)}
-                                style={{ padding: '10px', borderRadius: '12px', border: '1px solid #e2e8f0', background: '#fff', color: '#64748b', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                                title="Regresar a etapa anterior"
-                              >
-                                <ChevronLeft size={16} />
-                              </button>
-                            )}
+
                             {idx < config.length - 1 && (
                               <button
                                 onClick={() => updateProspectStage(p.id, config[idx + 1].name, p.isClient)}
@@ -4011,14 +4091,7 @@ function VentasModule({ onBack, onNavigate, setQuotingProspect, user, backorders
                             <div style={{ height: 0 }} />
                           )}
                           <div style={{ display: 'flex', gap: '8px' }}>
-                            {idx > 0 && (
-                              <button
-                                onClick={() => updateProspectStage(p.id, config[idx - 1].name, p.isClient)}
-                                style={{ padding: '10px', borderRadius: '12px', border: '1px solid #e2e8f0', background: '#fff', color: '#64748b', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer' }}
-                              >
-                                <ChevronLeft size={16} />
-                              </button>
-                            )}
+
                             <button
                               onClick={() => { setEditingNotesFor(p); setCurrentNotes(p.notes || ''); setShowNotesModal(true); }}
                               style={{ flex: 1, padding: '10px', borderRadius: '12px', border: '1px solid #e2e8f0', background: '#f8fafc', color: '#475569', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer' }}
@@ -4045,24 +4118,18 @@ function VentasModule({ onBack, onNavigate, setQuotingProspect, user, backorders
 
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                             <button
-                              onClick={() => updateProspectStage(p.id, 'Recibir Pedido', p.isClient)}
+                              onClick={() => updateProspectStage(p.id, 'Depósito (Venta)', p.isClient)}
                               style={{ width: '100%', padding: '12px', borderRadius: '12px', border: 'none', background: '#0f172a', color: '#fff', fontWeight: 800, fontSize: '0.8rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
                             >
                               <CheckCircle2 size={16} /> Enviar a Facturación
                             </button>
 
                             <div style={{ display: 'flex', gap: '6px' }}>
-                              <button
-                                onClick={() => updateProspectStage(p.id, 'Cotizarle', p.isClient)}
-                                style={{ flex: 1, padding: '10px', borderRadius: '12px', border: '1px solid #e2e8f0', background: '#fff', color: '#64748b', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer' }}
-                              >
-                                ← Cotización
-                              </button>
+
                               <button
                                 onClick={() => {
-                                  if (window.confirm('¿Marcar este prospecto como PERDIDO?')) {
-                                    updateProspectStage(p.id, 'Perdido', p.isClient);
-                                  }
+                                  setProspectToLose(p);
+                                  setShowLostModal(true);
                                 }}
                                 style={{ flex: 1, padding: '10px', borderRadius: '12px', border: 'none', background: '#fef2f2', color: '#dc2626', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer' }}
                               >
@@ -4095,14 +4162,7 @@ function VentasModule({ onBack, onNavigate, setQuotingProspect, user, backorders
                           </button>
 
                           <div style={{ display: 'flex', gap: '6px' }}>
-                            {idx > 0 && (
-                              <button
-                                onClick={() => updateProspectStage(p.id, config[idx - 1].name, p.isClient)}
-                                style={{ padding: '10px', borderRadius: '12px', border: '1px solid #e2e8f0', background: '#fff', color: '#64748b', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
-                              >
-                                <ChevronLeft size={16} />
-                              </button>
-                            )}
+
                             <button
                               onClick={() => updateProspectStage(p.id, config[idx + 1].name, p.isClient)}
                               style={{ flex: 1, padding: '12px', borderRadius: '14px', border: 'none', background: '#0f172a', color: '#fff', fontWeight: 800, fontSize: '0.8rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
@@ -4138,14 +4198,7 @@ function VentasModule({ onBack, onNavigate, setQuotingProspect, user, backorders
                             <p style={{ margin: '8px 0 0 0', fontSize: '0.65rem', color: '#64748b', textAlign: 'center', fontWeight: 600 }}>Cargar productos desde catálogo</p>
                           </div>
                           <div style={{ display: 'flex', gap: '8px' }}>
-                            {idx > 0 && (
-                              <button
-                                onClick={() => updateProspectStage(p.id, config[idx - 1].name, p.isClient)}
-                                style={{ padding: '10px', borderRadius: '12px', border: '1px solid #e2e8f0', background: '#fff', color: '#64748b', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
-                              >
-                                <ChevronLeft size={16} />
-                              </button>
-                            )}
+
                             <button
                               onClick={() => updateProspectStage(p.id, config[idx + 1].name, p.isClient)}
                               style={{ flex: 1, padding: '10px', borderRadius: '12px', border: 'none', background: '#0f172a', color: '#fff', fontWeight: 800, fontSize: '0.75rem', cursor: 'pointer' }}
@@ -4163,41 +4216,26 @@ function VentasModule({ onBack, onNavigate, setQuotingProspect, user, backorders
                       ) : stage.name === 'Por Menores' ? (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                           <div style={{ background: '#f8fafc', padding: '12px', borderRadius: '16px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                            <button
-                              onClick={() => {
-                                setPorMenoresProspect(p);
-                                // Intentar recuperar datos previos si los hay
-                                let parsed = { stock: false, transport: false, rfc: '', cfdi: 'Gastos en general', extra: '' };
-                                if (p.notes && p.notes.includes('CHECKLIST_JSON:')) {
-                                  try {
-                                    const jsonStr = p.notes.split('CHECKLIST_JSON:')[1];
-                                    parsed = { ...parsed, ...JSON.parse(jsonStr) };
-                                  } catch (e) { console.error('Error parsing checklist'); }
-                                }
-                                setPorMenoresData(parsed);
-                                setShowPorMenoresModal(true);
-                              }}
-                              style={{ width: '100%', padding: '10px', borderRadius: '12px', border: '1px solid #dbeafe', background: '#eff6ff', color: '#1d4ed8', fontWeight: 800, fontSize: '0.75rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
-                            >
-                              <FileCheck2 size={16} />
-                              Logística y Validación
-                            </button>
-                          </div>
-                          <div style={{ display: 'flex', gap: '6px' }}>
-                            {idx > 0 && (
-                              <button
-                                onClick={() => updateProspectStage(p.id, config[idx - 1].name, p.isClient)}
-                                style={{ padding: '10px', borderRadius: '12px', border: '1px solid #e2e8f0', background: '#fff', color: '#64748b', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
-                              >
-                                <ChevronLeft size={16} />
-                              </button>
-                            )}
-                            <button
-                              onClick={() => updateProspectStage(p.id, config[idx + 1].name, p.isClient)}
-                              style={{ flex: 1, padding: '10px', borderRadius: '12px', border: 'none', background: '#059669', color: '#fff', fontWeight: 800, fontSize: '0.8rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', boxShadow: '0 4px 6px rgba(5, 150, 105, 0.2)' }}
-                            >
-                              <DollarSign size={16} /> A Depósito
-                            </button>
+                            {(() => {
+                              const myBOs = (backorders || []).filter(bo => bo.cliente === p.name && (bo.estado === 'Entrega Pendiente' || bo.estado === 'Parcial'));
+                              const expandedMyBOs = expandOrderItems(myBOs);
+                              const totalItems = expandedMyBOs.reduce((sum, b) => sum + (b.pedidoOri || 0), 0);
+                              const missingItems = expandedMyBOs.reduce((sum, b) => sum + (b.pendiente || 0), 0);
+                              const deliveredItems = totalItems - missingItems;
+                              
+                              if (totalItems > 0) {
+                                return (
+                                  <div style={{ background: '#fff', border: '1px solid #e2e8f0', padding: '10px', borderRadius: '12px', textAlign: 'center' }}>
+                                    <p style={{ margin: '0 0 4px 0', fontSize: '0.75rem', fontWeight: 800, color: '#475569' }}>RESUMEN DE ENTREGA</p>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px' }}>
+                                      <div><span style={{ fontSize: '1.2rem', fontWeight: 900, color: '#10b981' }}>{deliveredItems}</span><br/><span style={{ fontSize: '0.65rem', color: '#64748b', fontWeight: 700 }}>ENTREGADOS</span></div>
+                                      <div><span style={{ fontSize: '1.2rem', fontWeight: 900, color: '#f59e0b' }}>{missingItems}</span><br/><span style={{ fontSize: '0.65rem', color: '#64748b', fontWeight: 700 }}>FALTANTES</span></div>
+                                    </div>
+                                  </div>
+                                );
+                              }
+                              return null;
+                            })()}
                           </div>
                         </div>
                       ) : stage.name === 'Depósito (Venta)' ? (
@@ -4206,38 +4244,11 @@ function VentasModule({ onBack, onNavigate, setQuotingProspect, user, backorders
                             <p style={{ margin: 0, fontSize: '0.75rem', color: '#a16207', fontWeight: 800 }}>💰 PENDIENTE DE PAGO</p>
                             <p style={{ margin: '4px 0 0 0', fontSize: '1.1rem', color: '#854d0e', fontWeight: 900 }}>${(p.budget || 0).toLocaleString('es-MX')}</p>
                           </div>
-                          <div style={{ display: 'flex', gap: '6px' }}>
-                            {idx > 0 && (
-                              <button
-                                onClick={() => updateProspectStage(p.id, config[idx - 1].name, p.isClient)}
-                                style={{ padding: '10px', borderRadius: '12px', border: '1px solid #e2e8f0', background: '#fff', color: '#64748b', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
-                              >
-                                <ChevronLeft size={16} />
-                              </button>
-                            )}
-                            <button
-                              onClick={() => {
-                                setPaymentProspect(p);
-                                setPaymentData(prev => ({ ...prev, amount: p.budget || 0 }));
-                                setShowPaymentModal(true);
-                              }}
-                              style={{ flex: 1, padding: '14px', borderRadius: '14px', border: 'none', background: '#059669', color: '#fff', fontWeight: 900, fontSize: '0.85rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', boxShadow: '0 4px 10px rgba(5, 150, 105, 0.2)' }}
-                            >
-                              <CheckCircle2 size={18} /> Registrar Pago
-                            </button>
-                          </div>
                         </div>
                       ) : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                           <div style={{ display: 'flex', gap: '6px', width: '100%' }}>
-                            {idx > 0 && (
-                              <button
-                                onClick={() => updateProspectStage(p.id, config[idx - 1].name, p.isClient)}
-                                style={{ padding: '10px', borderRadius: '12px', border: '1px solid #e2e8f0', background: '#fff', color: '#64748b', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer' }}
-                              >
-                                <ChevronLeft size={16} />
-                              </button>
-                            )}
+
                             {idx < config.length - 1 && (
                               <button
                                 disabled={stage.name === 'Cita Agendada' && p.appointmentDate && new Date(p.appointmentDate) > new Date()}
@@ -4254,7 +4265,7 @@ function VentasModule({ onBack, onNavigate, setQuotingProspect, user, backorders
                             )}
                           </div>
                           <button
-                            onClick={() => updateProspectStage(p.id, 'Contacto', true, true)}
+                            onClick={() => handleRestartPipeline(p)}
                             style={{ width: '100%', padding: '12px', borderRadius: '12px', border: 'none', background: '#dcfce7', color: '#166534', fontWeight: 800, fontSize: '0.75rem', cursor: 'pointer' }}
                           >
                             Reiniciar Pipeline
@@ -4277,7 +4288,7 @@ function VentasModule({ onBack, onNavigate, setQuotingProspect, user, backorders
       </div>
     );
   };
-  const pagadas = (carteraList || []).filter(c => c.status?.toLowerCase() === 'pagado');
+  const pagadas = (prospects || []).filter(p => p.stage === 'Venta Completada');
 
   return (
     <div className="module-container" style={{ background: '#f8fafc', minHeight: '100vh', paddingBottom: '100px' }}>
@@ -4314,7 +4325,6 @@ function VentasModule({ onBack, onNavigate, setQuotingProspect, user, backorders
           <div style={{ background: '#fff', borderRadius: '24px', border: '1px solid #e2e8f0', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
             <div style={{ padding: '24px', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h3 style={{ fontWeight: 800, color: '#1e293b' }}>Registro Histórico de Pagos</h3>
-              <button className="btn-secondary" onClick={() => window.location.reload()}><AlertCircle size={16} /> Sincronizar Datos</button>
             </div>
             <table className="data-table">
               <thead style={{ background: '#f8fafc' }}>
@@ -4330,9 +4340,9 @@ function VentasModule({ onBack, onNavigate, setQuotingProspect, user, backorders
                   <tr><td colSpan="4" style={{ textAlign: 'center', padding: '100px', opacity: 0.5 }}>No hay ventas liquidadas registradas.</td></tr>
                 ) : pagadas.map(c => (
                   <tr key={c.id}>
-                    <td style={{ padding: '16px 24px', fontWeight: 800, color: '#0f172a' }}>{c.client}</td>
-                    <td style={{ padding: '16px 24px', fontWeight: 900, fontSize: '1.1rem' }}>${(c.amount || 0).toLocaleString('es-MX')}</td>
-                    <td style={{ padding: '16px 24px', color: '#64748b' }}>{c.seller || 'N/A'}</td>
+                    <td style={{ padding: '16px 24px', fontWeight: 800, color: '#0f172a' }}>{c.name}</td>
+                    <td style={{ padding: '16px 24px', fontWeight: 900, fontSize: '1.1rem' }}>${(c.budget || 0).toLocaleString('es-MX')}</td>
+                    <td style={{ padding: '16px 24px', color: '#64748b' }}>{c.seller || user?.name || 'Asesor Comercial'}</td>
                     <td style={{ padding: '16px 24px' }}>
                       <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '8px 16px', borderRadius: '12px', background: '#dcfce7', color: '#166534', fontWeight: 800, fontSize: '0.75rem' }}>
                         <CheckCircle2 size={14} /> LIQUIDADO
@@ -4720,10 +4730,26 @@ function VentasModule({ onBack, onNavigate, setQuotingProspect, user, backorders
                       });
 
                       if (resp.ok) {
-                        await fetch(`/api/prospects/${paymentProspect.id}`, { method: 'DELETE' });
+                        // Mover el prospecto a 'Recibir Pedido'
+                        await fetch(`/api/prospects/${paymentProspect.id}`, {
+                          method: 'PUT',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ stage: 'Recibir Pedido' })
+                        });
+
+                        // Actualizar backorders asociados para activar Logística
+                        const draftBOs = (backorders || []).filter(bo => bo.cliente === paymentProspect.name && (bo.estado === 'Cotización' || bo.estado === 'Facturación' || bo.estado === 'Pendiente'));
+                        for (const bo of draftBOs) {
+                          await fetch(`/api/backorders/${bo.id}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ ...bo, estado: 'Entrega Pendiente', billingStatus: 'Pagado' })
+                          });
+                        }
+
                         if (refreshData) refreshData();
                         setShowPaymentModal(false);
-                        alert('¡Pago registrado exitosamente! La venta se ha movido al Histórico Liquidado.');
+                        alert('¡Pago registrado exitosamente! La venta ha pasado a Logística (Recibir Pedido).');
                       } else {
                         alert('Error al registrar el pago');
                       }
@@ -5538,36 +5564,13 @@ function ProspectosModule({ onBack, prospects, setProspects, refreshProspects, o
                     <div style={{ maxWidth: '100%', textAlign: 'left', paddingRight: '85px' }}>
                       <h3 style={{ fontSize: '1.4rem', fontWeight: 900, margin: 0, color: '#0f172a', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', textTransform: 'uppercase', letterSpacing: '-0.02em' }}>{prospect.name}</h3>
                       <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-                        <div>
-                          {prospect.stage === 'Venta Completada' ? (
-                            <span style={{ background: '#f0fdf4', color: '#10b981', fontSize: '0.75rem', fontWeight: 800, padding: '6px 14px', borderRadius: '20px', display: 'inline-flex', alignItems: 'center', gap: '6px', border: '1px solid #bbf7d0' }}>
-                              <CheckCircle2 size={14} /> CLIENTE ACTIVO
-                            </span>
-                          ) : prospect.stage === 'Venta Cerrada' ? (
-                            prospectOrders.length === 0 && mode === 'clients' ? (
-                              <span style={{ background: '#fef2f2', color: '#ef4444', fontSize: '0.75rem', fontWeight: 800, padding: '6px 14px', borderRadius: '20px', display: 'inline-flex', alignItems: 'center', gap: '6px', border: '1px solid #fecaca' }}>
-                                <AlertTriangle size={14} /> PEDIDO CANCELADO
-                              </span>
-                            ) : (
-                              <span style={{ background: '#fffbeb', color: '#d97706', fontSize: '0.75rem', fontWeight: 800, padding: '6px 14px', borderRadius: '20px', display: 'inline-flex', alignItems: 'center', gap: '6px', border: '1px solid #fde68a' }}>
-                                <Clock size={14} /> PEDIDO PENDIENTE
-                              </span>
-                            )
-                          ) : (
-                            <span style={{ background: mode === 'clients' ? '#f8fafc' : '#eff6ff', color: mode === 'clients' ? '#64748b' : '#2563eb', fontSize: '0.75rem', fontWeight: 800, padding: '6px 14px', borderRadius: '20px', display: 'inline-flex', alignItems: 'center', gap: '6px', border: mode === 'clients' ? '1px solid #e2e8f0' : '1px solid #bfdbfe' }}>
-                              <Users size={14} /> {prospect.stage.toUpperCase()}
-                            </span>
-                          )}
-                        </div>
+
 
                         {/* Quick Stage Actions */}
                         {!prospect.isClient ? (
                           <div style={{ display: 'flex', gap: '8px' }}>
                             {prospect.stage === 'Contacto' && (
                               <button onClick={() => updateStage(prospect, 'Evaluación')} style={{ background: '#f0fdfa', border: '1px solid #99f6e4', color: '#0d9488', padding: '8px 12px', borderRadius: '10px', fontSize: '0.65rem', fontWeight: 800, cursor: 'pointer' }}>Evaluar →</button>
-                            )}
-                            {prospect.stage === 'Evaluación' && (
-                              <button onClick={() => updateStage(prospect, 'Negociación')} style={{ background: '#f0f9ff', border: '1px solid #bae6fd', color: '#0284c7', padding: '8px 12px', borderRadius: '10px', fontSize: '0.65rem', fontWeight: 800, cursor: 'pointer' }}>Negociar →</button>
                             )}
                           </div>
                         ) : (
@@ -5826,7 +5829,7 @@ function CarteraModule({ onBack, backorders, refreshCartera, sellers = [] }) {
 
     const buffer = await workbook.xlsx.writeBuffer();
     const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    saveAs(blob, `Cartera_Vencida_${new Date().toISOString().split('T')[0]}.xlsx`);
+    saveAs(blob, `AGRO-Cartera_Vencida_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
   const calculateAging = (dateStr) => {
@@ -6068,6 +6071,8 @@ function CarteraModule({ onBack, backorders, refreshCartera, sellers = [] }) {
           </div>
         </div>
       </div>
+
+
     </div>
   );
 }
@@ -6075,260 +6080,245 @@ function CarteraModule({ onBack, backorders, refreshCartera, sellers = [] }) {
 // 7. Módulo de Reportes
 
 // 7. Módulo de Reportes
-function ReportesModule({ onBack, sellers, carteraList, backorders, activities, prospects }) {
+function ReportesModule({ onBack, sellers, carteraList, backorders, activities, prospects, products }) {
   const reports = [
-    { id: 'ventas', title: 'Ventas vs Presupuesto', desc: 'Comparativo de ventas reales contra presupuesto por vendedor' },
-    { id: 'cartera', title: 'Cartera por Antigüedad', desc: 'Detalle de cuentas por cobrar segmentadas por rangos' },
-    { id: 'tasa', title: 'Tasa de Conversión', desc: 'Metas Alcanzadas vs Prospectos en Proceso (Global)' },
-    { id: 'backorders', title: 'Backorders por Cliente', desc: 'Resumen de pedidos pendientes agrupados por cliente' },
-    { id: 'comercial', title: 'Efectividad Comercial', desc: 'Análisis de actividades comerciales y resultados' },
-    { id: 'productos', title: 'Backorders por Producto', desc: 'Productos con mayor demanda pendiente' },
+    { id: 'estadocuenta', title: 'Estado de Cuenta de Cliente', desc: 'Saldos, abonos y antigüedad por cliente' },
+    { id: 'rendimiento', title: 'Comisiones por Vendedor', desc: 'Ventas logradas y cálculo de comisiones' },
+    { id: 'valuacion', title: 'Valuación de Inventario', desc: 'Valor total del almacén y rotación' },
+    { id: 'flujo', title: 'Proyección de Flujo', desc: 'Cuentas por cobrar y prospectos por cerrar' },
+    { id: 'logistica', title: 'Logística y Entregas', desc: 'Backorders y entregas pendientes' },
+    { id: 'topproductos', title: 'Rentabilidad y Top Productos', desc: 'Productos estrella y utilidades' },
+    { id: 'efectividadcrm', title: 'Efectividad Comercial', desc: 'Tasa de bateo y desempeño CRM' },
+    { id: 'resumen', title: 'Resumen Ejecutivo', desc: 'Dashboard mensual de la empresa' },
   ];
 
   const generatePDF = (reportId) => {
-    const doc = new jsPDF();
     const now = new Date().toLocaleString('es-MX');
 
-    // Inyectar el Logo (Base64 directo)
-    try {
-      doc.addImage(AGRIFLOW_LOGO, 'PNG', 14, 8, 28, 28);
-    } catch (e) {
-      console.warn("Logo fallido:", e);
-    }
+    if (reportId === 'estadocuenta') {
+      const activeDebt = (backorders || []).filter(b => b.billingStatus !== 'Pagado' && (b.precio || 0) > 0);
+      const total = activeDebt.reduce((s, b) => s + ((b.precio || 0) * (b.cantidad || 1)), 0);
+      
+      const calculateAging = (dateStr) => {
+        if (!dateStr) return '1-30';
+        const diffDays = Math.ceil(Math.abs(new Date() - new Date(dateStr)) / (1000 * 60 * 60 * 24));
+        if (diffDays <= 30) return '1-30'; if (diffDays <= 60) return '31-60'; if (diffDays <= 90) return '61-90'; return '+90';
+      };
 
-    if (reportId === 'ventas') {
-      doc.setFontSize(18);
-      doc.setTextColor(45, 90, 63);
-      doc.text('AgriFlow Pro - Reporte de Ventas YTD', 50, 22);
-
-      doc.setFontSize(10);
-      doc.setTextColor(100);
-      doc.text(`Generado el: ${now}`, 50, 30);
-
-      const tableData = (sellers || []).map(s => [
-        s.name,
-        `$${(s.sales || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}`,
-        `$${(s.budget || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}`,
-        `${s.budget > 0 ? ((s.sales / s.budget) * 100).toFixed(1) : '0'}%`
-      ]);
-
-      autoTable(doc, {
-        startY: 40,
-        head: [['Vendedor', 'Ventas Logradas', 'Presupuesto Anual', '% Progreso']],
-        body: tableData,
-        theme: 'striped',
-        headStyles: { fillColor: [45, 90, 63] }
+      generatePremiumPDF({
+        logoBase64: AGRIFLOW_LOGO,
+        title: "ESTADO DE CUENTA (CUENTAS POR COBRAR)",
+        filename: `AGRO-EstadoCuenta_${new Date().toISOString().split('T')[0]}.pdf`,
+        headerDetails: [{ label: 'Generado:', value: now }],
+        cards: [
+          { title: "FACTURAS VENCIDAS", value: activeDebt.length.toString(), sub: "Documentos pendientes" },
+          { title: "DEUDA TOTAL", value: `$${total.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`, sub: "MXN" }
+        ],
+        table: {
+          head: [['FECHA', 'CLIENTE', 'VENDEDOR', 'ANTIGÜEDAD', 'MONTO']],
+          body: activeDebt.map(b => [
+            new Date(b.createdAt).toLocaleDateString(),
+            b.cliente,
+            b.vendedor || 'N/A',
+            calculateAging(b.createdAt),
+            `$${((b.precio || 0) * (b.cantidad || 1)).toLocaleString('es-MX', { minimumFractionDigits: 2 })}`
+          ])
+        },
+        summary: { right: [{ label: "SALDO TOTAL POR COBRAR", value: `$${total.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`, isTotal: true, color: "#dc2626" }] }
       });
-
-      const finalY = (doc.lastAutoTable && doc.lastAutoTable.finalY) ? doc.lastAutoTable.finalY : 100;
-
-      // Draw Bar Chart in PDF
-      doc.setFontSize(14);
-      doc.setTextColor(45, 90, 63);
-      doc.text('Gráfica de Rendimiento vs Presupuesto', 14, finalY + 15);
-
-      const chartY = finalY + 25;
-      const chartHeight = 60;
-      const chartWidth = 180;
-      const maxPdfVal = Math.max(...(sellers || []).map(s => Math.max(s.budget, s.sales) || 1));
-
-      doc.setDrawColor(200);
-      doc.line(14, chartY + chartHeight, 14 + chartWidth, chartY + chartHeight); // Eje X
-
-      if (sellers && sellers.length > 0) {
-        const barWidth = Math.min(15, (chartWidth / sellers.length) * 0.4);
-        const gap = (chartWidth - (sellers.length * barWidth * 2)) / (sellers.length + 1);
-
-        let currentX = 14 + gap;
-        sellers.forEach(s => {
-          const budgetH = (s.budget / maxPdfVal) * chartHeight;
-          const salesH = (s.sales / maxPdfVal) * chartHeight;
-
-          // Presupuesto
-          doc.setFillColor(30, 58, 138);
-          doc.rect(currentX, chartY + chartHeight - budgetH, barWidth, budgetH, 'F');
-
-          // Ventas
-          doc.setFillColor(45, 90, 63);
-          doc.rect(currentX + barWidth, chartY + chartHeight - salesH, barWidth, salesH, 'F');
-
-          doc.setFontSize(8);
-          doc.setTextColor(100);
-          const nameParts = (s.name || '').split(' ');
-          doc.text(nameParts[0], currentX + barWidth, chartY + chartHeight + 5, { align: 'center' });
-
-          currentX += (barWidth * 2) + gap;
-        });
-
-        // Leyenda
-        const legendY = chartY + chartHeight + 15;
-        doc.setFillColor(30, 58, 138);
-        doc.rect(14, legendY, 5, 5, 'F');
-        doc.text('Presupuesto Anual', 21, legendY + 4);
-
-        doc.setFillColor(45, 90, 63);
-        doc.rect(60, legendY, 5, 5, 'F');
-        doc.text('Ventas Logradas', 67, legendY + 4);
-      }
-
-      doc.save(`Reporte_Ventas_${new Date().toISOString().split('T')[0]}.pdf`);
-    } else if (reportId === 'cartera') {
-      doc.setFontSize(18);
-      doc.setTextColor(45, 90, 63);
-      doc.text('AgriFlow Pro - Estado de Cartera Vencida', 50, 22);
-
-      doc.setFontSize(10);
-      doc.setTextColor(100);
-      doc.text(`Generado el: ${now}`, 50, 30);
-
-      const tableData = (carteraList || []).map(c => [
-        new Date(c.createdAt).toLocaleDateString(),
-        c.client,
-        c.seller,
-        c.ageGroup,
-        `$${parseFloat(c.amount || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}`
-      ]);
-
-      autoTable(doc, {
-        startY: 40,
-        head: [['Fecha', 'Cliente', 'Vendedor', 'Antigüedad', 'Monto']],
-        body: tableData,
-        theme: 'grid',
-        headStyles: { fillColor: [45, 90, 63] }
+    } else if (reportId === 'rendimiento') {
+      const totalSales = (sellers || []).reduce((s, x) => s + (x.sales || 0), 0);
+      const totalComissions = (sellers || []).reduce((s, x) => s + ((x.sales || 0) * 0.05), 0); // 5% example
+      generatePremiumPDF({
+        logoBase64: AGRIFLOW_LOGO,
+        title: "RENDIMIENTO Y COMISIONES",
+        filename: `AGRO-Rendimiento_${new Date().toISOString().split('T')[0]}.pdf`,
+        headerDetails: [{ label: 'Generado:', value: now }],
+        cards: [
+          { title: "VENTAS GLOBALES", value: `$${totalSales.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`, sub: "MXN" },
+          { title: "COMISIONES A PAGAR", value: `$${totalComissions.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`, sub: "Aprox (5%)" }
+        ],
+        table: {
+          head: [['VENDEDOR', 'VENTAS LOGRADAS', 'PRESUPUESTO', 'COMISIÓN (5%)']],
+          body: (sellers || []).map(s => [
+            s.name,
+            `$${(s.sales || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}`,
+            `$${(s.budget || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}`,
+            `$${((s.sales || 0) * 0.05).toLocaleString('es-MX', { minimumFractionDigits: 2 })}`
+          ])
+        },
+        summary: { right: [{ label: "TOTAL COMISIONES", value: `$${totalComissions.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`, isTotal: true, color: "#16a34a" }] }
       });
-
-      doc.save(`Reporte_Cartera_${new Date().toISOString().split('T')[0]}.pdf`);
-    } else if (reportId === 'backorders') {
-      doc.setFontSize(18);
-      doc.setTextColor(45, 90, 63);
-      doc.text('AgriFlow Pro - Reporte de Backorders por Cliente', 50, 22);
-
-      doc.setFontSize(10);
-      doc.setTextColor(100);
-      doc.text(`Generado el: ${now}`, 50, 30);
-
-      const tableData = (backorders || []).map(b => [
-        b.cliente,
-        b.producto,
-        b.vendedor,
-        b.cantidad,
-        b.pendiente,
-        `$${(b.precio || 0).toLocaleString('es-MX')}`,
-        `$${((b.precio || 0) * (b.cantidad || 0)).toLocaleString('es-MX')}`,
-        b.estado
-      ]);
-
+    } else if (reportId === 'valuacion') {
+      const totalCost = (products || []).reduce((s, p) => s + ((p.quantity || 0) * (p.cost || p.price * 0.6 || 0)), 0);
+      const totalValue = (products || []).reduce((s, p) => s + ((p.quantity || 0) * (p.price || 0)), 0);
+      generatePremiumPDF({
+        logoBase64: AGRIFLOW_LOGO,
+        title: "VALUACIÓN DE INVENTARIO",
+        filename: `AGRO-Valuacion_${new Date().toISOString().split('T')[0]}.pdf`,
+        headerDetails: [{ label: 'Generado:', value: now }],
+        cards: [
+          { title: "VALOR COSTO", value: `$${totalCost.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`, sub: "Capital invertido" },
+          { title: "VALOR VENTA", value: `$${totalValue.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`, sub: "Ingreso potencial" }
+        ],
+        table: {
+          head: [['CÓDIGO', 'PRODUCTO', 'STOCK', 'COSTO UNIT.', 'VALOR TOTAL']],
+          body: (products || []).filter(p => (p.quantity || 0) > 0).map(p => [
+            String(p.id).padStart(4, '0'),
+            p.name,
+            p.quantity.toString(),
+            `$${(p.cost || p.price * 0.6 || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}`,
+            `$${((p.quantity || 0) * (p.cost || p.price * 0.6 || 0)).toLocaleString('es-MX', { minimumFractionDigits: 2 })}`
+          ])
+        },
+        summary: { right: [{ label: "VALOR TOTAL INVENTARIO", value: `$${totalCost.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`, isTotal: true, color: "#0f172a" }] }
+      });
+    } else if (reportId === 'flujo') {
+      const activeDebt = (backorders || []).filter(b => b.billingStatus !== 'Pagado' && (b.precio || 0) > 0);
+      const expectedInvoices = activeDebt.reduce((s, b) => s + ((b.precio || 0) * (b.cantidad || 1)), 0);
+      const expectedPipeline = (prospects || []).filter(p => p.budget > 0 && !['Perdido', 'Cancelado', 'Venta Completada', 'Venta Cerrada', 'Ganado', 'Nuevo Cliente'].includes(p.stage)).reduce((s, p) => s + parseFloat(p.budget || 0), 0);
+      generatePremiumPDF({
+        logoBase64: AGRIFLOW_LOGO,
+        title: "PROYECCIÓN DE FLUJO DE EFECTIVO",
+        filename: `AGRO-FlujoEfectivo_${new Date().toISOString().split('T')[0]}.pdf`,
+        headerDetails: [{ label: 'Generado:', value: now }],
+        cards: [
+          { title: "POR COBRAR (FACTURADO)", value: `$${expectedInvoices.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`, sub: "Cartera actual" },
+          { title: "POR CERRAR (PIPELINE)", value: `$${expectedPipeline.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`, sub: "Alta probabilidad" }
+        ],
+        table: {
+          head: [['TIPO', 'CLIENTE / PROSPECTO', 'ESTADO', 'MONTO ESPERADO']],
+          body: [
+            ...activeDebt.map(b => ['Factura Vencida', b.cliente, b.documento || 'Sin folio', `$${((b.precio || 0) * (b.cantidad || 1)).toLocaleString('es-MX', { minimumFractionDigits: 2 })}`]),
+            ...(prospects || []).filter(p => p.budget > 0 && !['Perdido', 'Cancelado', 'Venta Completada', 'Venta Cerrada', 'Ganado', 'Nuevo Cliente'].includes(p.stage)).map(p => ['Prospecto', p.name, p.stage, `$${parseFloat(p.budget || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}`])
+          ]
+        },
+        summary: { right: [{ label: "FLUJO DE EFECTIVO PROYECTADO", value: `$${(expectedInvoices + expectedPipeline).toLocaleString('es-MX', { minimumFractionDigits: 2 })}`, isTotal: true, color: "#16a34a" }] }
+      });
+    } else if (reportId === 'logistica') {
       const totalValue = (backorders || []).reduce((sum, b) => sum + ((b.precio || 0) * (b.cantidad || 0)), 0);
-
-      autoTable(doc, {
-        startY: 40,
-        head: [['Cliente', 'Producto', 'Vendedor', 'Cant.', 'Pend.', 'Precio', 'Subtotal', 'Estado']],
-        body: tableData,
-        theme: 'striped',
-        headStyles: { fillColor: [45, 90, 63], fontSize: 8 },
-        bodyStyles: { fontSize: 8 },
-        foot: [['', '', '', '', '', 'TOTAL:', `$${totalValue.toLocaleString('es-MX')}`, '']],
-        footStyles: { fillColor: [248, 250, 252], textColor: [45, 90, 63], fontStyle: 'bold', fontSize: 8 }
+      generatePremiumPDF({
+        logoBase64: AGRIFLOW_LOGO,
+        title: "LOGÍSTICA Y ENTREGAS (BACKORDERS)",
+        filename: `AGRO-Logistica_${new Date().toISOString().split('T')[0]}.pdf`,
+        headerDetails: [{ label: 'Generado:', value: now }],
+        cards: [
+          { title: "LÍNEAS PENDIENTES", value: backorders.length.toString(), sub: "En ruta o almacén" },
+          { title: "VALOR EN RIESGO", value: `$${totalValue.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`, sub: "Mercancía detenida" }
+        ],
+        table: {
+          head: [['FECHA ENTREGA', 'CLIENTE', 'PRODUCTO', 'PEND.', 'ESTADO']],
+          body: (backorders || []).map(b => [
+            b.fechaEntrega ? new Date(b.fechaEntrega).toLocaleDateString() : 'Sin fecha',
+            b.cliente,
+            b.producto,
+            b.pendiente.toString(),
+            b.estado
+          ])
+        },
+        summary: { right: [{ label: "VALOR DE BACKORDERS", value: `$${totalValue.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`, isTotal: true, color: "#d97706" }] }
       });
-
-      doc.save(`Reporte_Backorders_${new Date().toISOString().split('T')[0]}.pdf`);
-    } else if (reportId === 'comercial') {
-      doc.setFontSize(18);
-      doc.setTextColor(45, 90, 63);
-      doc.text('AgriFlow Pro - Efectividad Comercial Y Acciones', 50, 22);
-
-      doc.setFontSize(10);
-      doc.setTextColor(100);
-      doc.text(`Generado el: ${now}`, 50, 30);
-
-      const tableData = (activities || []).map(a => [
-        a.date,
-        a.client,
-        a.type,
-        a.description.substring(0, 50) + '...',
-        a.status
-      ]);
-
-      autoTable(doc, {
-        startY: 40,
-        head: [['Fecha', 'Cliente', 'Actividad', 'Detalle', 'Estado']],
-        body: tableData,
-        theme: 'striped',
-        headStyles: { fillColor: [45, 90, 63] }
+        } else if (reportId === 'topproductos') {
+      const salesMap = {};
+      (backorders || []).filter(b => b.billingStatus !== 'Cancelado').forEach(b => {
+        if (!salesMap[b.producto]) salesMap[b.producto] = 0;
+        salesMap[b.producto] += (b.cantidad || 0);
       });
+      
+      const productStats = (products || []).map(p => {
+        const sold = salesMap[p.name] || 0;
+        const profitPerUnit = (p.price || 0) - (p.cost || (p.price * 0.6) || 0);
+        return { ...p, sold, totalProfit: sold * profitPerUnit };
+      }).sort((a, b) => b.sold - a.sold).slice(0, 15);
+      
+      const totalUnits = productStats.reduce((s, p) => s + p.sold, 0);
+      const totalGrossProfit = productStats.reduce((s, p) => s + p.totalProfit, 0);
 
-      doc.save(`Reporte_Efectividad_${new Date().toISOString().split('T')[0]}.pdf`);
-    } else if (reportId === 'productos') {
-      doc.setFontSize(18);
-      doc.setTextColor(45, 90, 63);
-      doc.text('AgriFlow Pro - Demanda Pendiente por Producto', 50, 22);
-
-      doc.setFontSize(10);
-      doc.setTextColor(100);
-      doc.text(`Generado el: ${now}`, 50, 30);
-
-      const productMap = {};
-      (backorders || []).forEach(b => {
-        if (!productMap[b.producto]) {
-          productMap[b.producto] = { name: b.producto, total: 0, customers: new Set() };
-        }
-        productMap[b.producto].total += b.pendiente;
-        productMap[b.producto].customers.add(b.cliente);
+      generatePremiumPDF({
+        logoBase64: AGRIFLOW_LOGO,
+        title: "RENTABILIDAD Y TOP PRODUCTOS",
+        filename: `AGRO-TopProductos_${new Date().toISOString().split('T')[0]}.pdf`,
+        headerDetails: [{ label: 'Generado:', value: now }],
+        cards: [
+          { title: "UNIDADES VENDIDAS (TOP 15)", value: totalUnits.toString(), sub: "Artículos desplazados" },
+          { title: "UTILIDAD BRUTA ESTIMADA", value: `$${totalGrossProfit.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`, sub: "Margen generado" }
+        ],
+        table: {
+          head: [['PRODUCTO', 'UNIDADES VENDIDAS', 'COSTO ESTIMADO', 'PRECIO VENTA', 'UTILIDAD GENERADA']],
+          body: productStats.map(p => [
+            p.name,
+            p.sold.toString(),
+            `$${(p.cost || p.price * 0.6 || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}`,
+            `$${(p.price || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}`,
+            `$${p.totalProfit.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`
+          ])
+        },
+        summary: { right: [{ label: "UTILIDAD DEL TOP 15", value: `$${totalGrossProfit.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`, isTotal: true, color: "#16a34a" }] }
       });
+    } else if (reportId === 'efectividadcrm') {
+      const wonStages = ['Venta Completada', 'Venta Cerrada', 'Ganado', 'Nuevo Cliente', 'Depósito (Venta)'];
+      const lostStages = ['Perdido', 'Cancelado'];
+      
+      const totalProspects = (prospects || []).length;
+      const wonProspects = (prospects || []).filter(p => wonStages.includes(p.stage));
+      const lostProspects = (prospects || []).filter(p => lostStages.includes(p.stage));
+      
+      const closedTotal = wonProspects.length + lostProspects.length;
+      const winRate = closedTotal > 0 ? Math.round((wonProspects.length / closedTotal) * 100) : 0;
+      
+      const wonBudget = wonProspects.reduce((s, p) => s + parseFloat(p.budget || 0), 0);
 
-      const tableData = Object.values(productMap).map(p => [
-        p.name,
-        p.total,
-        p.customers.size,
-        p.total > 100 ? 'ALTA DEMANDA' : 'PENDIENTE'
-      ]);
-
-      autoTable(doc, {
-        startY: 40,
-        head: [['Producto', 'Unidades Pendientes', 'Clientes Afectados', 'Estado']],
-        body: tableData,
-        theme: 'striped',
-        headStyles: { fillColor: [45, 90, 63] }
+      generatePremiumPDF({
+        logoBase64: AGRIFLOW_LOGO,
+        title: "EFECTIVIDAD COMERCIAL Y CRM",
+        filename: `AGRO-EfectividadCRM_${new Date().toISOString().split('T')[0]}.pdf`,
+        headerDetails: [{ label: 'Generado:', value: now }],
+        cards: [
+          { title: "TASA DE BATEO (CIERRES)", value: `${winRate}%`, sub: `${wonProspects.length} ganados de ${closedTotal} cerrados` },
+          { title: "PRESUPUESTO GANADO", value: `$${wonBudget.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`, sub: "Valor de negocios cerrados" }
+        ],
+        table: {
+          head: [['PROSPECTO', 'INTERÉS', 'ETAPA', 'PRESUPUESTO', 'ESTADO']],
+          body: (prospects || []).map(p => {
+            let status = 'En Proceso';
+            if (wonStages.includes(p.stage)) status = 'Ganado';
+            if (lostStages.includes(p.stage)) status = 'Perdido';
+            return [
+              p.name,
+              p.interest || 'General',
+              p.stage,
+              `$${parseFloat(p.budget || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}`,
+              status
+            ];
+          })
+        },
+        summary: { right: [{ label: "PROSPECTOS TOTALES", value: totalProspects.toString(), isTotal: true, color: "#0f172a" }] }
       });
-
-      doc.save(`Reporte_Productos_${new Date().toISOString().split('T')[0]}.pdf`);
-    } else if (reportId === 'tasa') {
-      doc.setFontSize(18);
-      doc.setTextColor(45, 90, 63);
-      doc.text('AgriFlow Pro - Embudo de Conversión Comercial', 50, 22);
-
-      doc.setFontSize(10);
-      doc.setTextColor(100);
-      doc.text(`Generado el: ${now}`, 50, 30);
-
-      const total = (prospects || []).length;
-      const closed = (prospects || []).filter(p => p.stage === 'Venta Cerrada').length;
-      const rate = total > 0 ? ((closed / total) * 100).toFixed(1) : '0';
-
-      doc.setFontSize(12);
-      doc.setTextColor(0);
-      doc.text(`Resumen Global: ${closed} de ${total} prospectos convertidos con éxito.`, 50, 40);
-
-      doc.setFontSize(14);
-      doc.setTextColor(45, 90, 63);
-      doc.text(`TASA DE CONVERSIÓN: ${rate}%`, 14, 55);
-
-      const tableData = (prospects || []).map(p => [
-        p.name,
-        p.stage,
-        `$${(p.budget || 0).toLocaleString('es-MX')}`,
-        p.stage === 'Venta Cerrada' ? 'FINALIZADO' : 'PENDIENTE'
-      ]);
-
-      autoTable(doc, {
-        startY: 65,
-        head: [['Prospecto', 'Etapa Actual', 'Presupuesto Estimado', 'Estado']],
-        body: tableData,
-        theme: 'striped',
-        headStyles: { fillColor: [45, 90, 63] }
+} else if (reportId === 'resumen') {
+      const totalSales = (sellers || []).reduce((s, x) => s + (x.sales || 0), 0);
+      const totalDebt = (backorders || []).filter(b => b.billingStatus !== 'Pagado' && (b.precio || 0) > 0).reduce((s, b) => s + ((b.precio || 0) * (b.cantidad || 1)), 0);
+      const totalCost = (products || []).reduce((s, p) => s + ((p.quantity || 0) * (p.cost || p.price * 0.6 || 0)), 0);
+      generatePremiumPDF({
+        logoBase64: AGRIFLOW_LOGO,
+        title: "RESUMEN EJECUTIVO DIRECCIÓN",
+        filename: `AGRO-ResumenEjecutivo_${new Date().toISOString().split('T')[0]}.pdf`,
+        headerDetails: [{ label: 'Generado:', value: now }],
+        cards: [
+          { title: "VENTAS LOGRADAS", value: `$${totalSales.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`, sub: "YTD" },
+          { title: "VALOR INVENTARIO", value: `$${totalCost.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`, sub: "Costo total" },
+          { title: "CARTERA VENCIDA", value: `$${totalDebt.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`, sub: "Por recuperar" }
+        ],
+        table: {
+          head: [['INDICADOR', 'MONTO ACTUAL', 'ESTADO']],
+          body: [
+            ['Total Ventas', `$${totalSales.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`, 'OK'],
+            ['Total Inventario (Costo)', `$${totalCost.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`, 'OK'],
+            ['Total Cartera Vencida', `$${totalDebt.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`, totalDebt > totalSales * 0.2 ? 'RIESGO' : 'OK'],
+            ['Backorders (Retrasos)', `${backorders.length} pedidos`, backorders.length > 10 ? 'ATENCIÓN' : 'OK']
+          ]
+        },
+        summary: { right: [{ label: "ACTIVO LÍQUIDO APROX", value: `$${(totalSales + totalCost).toLocaleString('es-MX', { minimumFractionDigits: 2 })}`, isTotal: true, color: "#7e22ce" }] }
       });
-
-      doc.save(`Reporte_Conversion_${new Date().toISOString().split('T')[0]}.pdf`);
     }
   };
 
@@ -6336,113 +6326,106 @@ function ReportesModule({ onBack, sellers, carteraList, backorders, activities, 
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Reporte AgriFlow');
 
-    // 1. Agregar Logo
     try {
-      const imageId = workbook.addImage({
-        base64: AGRIFLOW_LOGO,
-        extension: 'png',
-      });
-      worksheet.addImage(imageId, {
-        tl: { col: 0, row: 0 },
-        ext: { width: 80, height: 80 }
-      });
-    } catch (e) {
-      console.warn("Excel logo error:", e);
-    }
+      const imageId = workbook.addImage({ base64: AGRIFLOW_LOGO, extension: 'png' });
+      worksheet.addImage(imageId, { tl: { col: 0, row: 0 }, ext: { width: 80, height: 80 } });
+    } catch (e) { }
 
-    // 2. Encabezado de Texto (Igual que el PDF)
     const reportTitles = {
-      ventas: 'Reporte de Ventas YTD',
-      cartera: 'Estado de Cartera Vencida',
-      backorders: 'Reporte de Backorders por Cliente',
-      comercial: 'Efectividad Comercial Y Acciones',
-      productos: 'Demanda Pendiente por Producto',
-      tasa: 'Embudo de Conversión Comercial'
+      estadocuenta: 'Estado de Cuenta de Cliente',
+      rendimiento: 'Comisiones por Vendedor',
+      valuacion: 'Valuación y Rotación de Inventario',
+      flujo: 'Proyección de Flujo de Efectivo',
+      logistica: 'Reporte de Logística y Entregas',
+      resumen: 'Resumen Ejecutivo'
     };
 
     const titleCell = worksheet.getCell('B2');
-    titleCell.value = `AgriFlow Pro - ${reportTitles[reportId] || 'Reporte de Operaciones'}`;
+    titleCell.value = `AgriFlow Pro - ${reportTitles[reportId] || 'Reporte'}`;
     titleCell.font = { name: 'Arial', size: 16, bold: true, color: { argb: 'FF2D5A3F' } };
 
     const dateCell = worksheet.getCell('B3');
     dateCell.value = `Generado el: ${new Date().toLocaleString('es-MX')}`;
     dateCell.font = { name: 'Arial', size: 10, color: { argb: 'FF666666' } };
 
-    // Ajustar anchos iniciales para pegar el texto al logo
-    worksheet.getColumn(1).width = 12; // Columna A (Logo)
-    worksheet.getColumn(2).width = 40; // Columna B (Texto)
-
-    // Espacio para logo e información (6 filas)
+    worksheet.getColumn(1).width = 12;
+    worksheet.getColumn(2).width = 40;
     for (let i = 0; i < 6; i++) worksheet.addRow([]);
 
     let headers = [];
     let rows = [];
-    let filename = `Reporte_${reportId}_${new Date().toISOString().split('T')[0]}.xlsx`;
+    let filename = `AGRO-Reporte_${reportId}_${new Date().toISOString().split('T')[0]}.xlsx`;
 
-    if (reportId === 'ventas') {
-      headers = ['Vendedor', 'Ventas Logradas', 'Presupuesto Anual', 'Cumplimiento %'];
-      rows = (sellers || []).map(s => [
-        s.name,
-        s.sales,
-        s.budget,
-        s.budget > 0 ? `${((s.sales / s.budget) * 100).toFixed(1)}%` : '0%'
-      ]);
-    } else if (reportId === 'cartera') {
+    if (reportId === 'estadocuenta') {
+      const calculateAging = (dateStr) => {
+        if (!dateStr) return '1-30';
+        const diffDays = Math.ceil(Math.abs(new Date() - new Date(dateStr)) / (1000 * 60 * 60 * 24));
+        if (diffDays <= 30) return '1-30'; if (diffDays <= 60) return '31-60'; if (diffDays <= 90) return '61-90'; return '+90';
+      };
+      const activeDebt = (backorders || []).filter(b => b.billingStatus !== 'Pagado' && (b.precio || 0) > 0);
       headers = ['Fecha', 'Cliente', 'Vendedor', 'Antigüedad', 'Monto'];
-      rows = (carteraList || []).map(c => [
-        new Date(c.createdAt).toLocaleDateString(),
-        c.client,
-        c.seller,
-        c.ageGroup,
-        c.amount
-      ]);
-    } else if (reportId === 'backorders') {
-      headers = ['Cliente', 'Producto', 'Vendedor', 'Cant. Orig', 'Pendiente', 'Precio Unit.', 'Subtotal', 'Estado'];
-      rows = (backorders || []).map(b => [
-        b.cliente, b.producto, b.vendedor, b.cantidad, b.pendiente, b.precio || 0, (b.precio || 0) * (b.cantidad || 0), b.estado
-      ]);
-    } else if (reportId === 'comercial') {
-      headers = ['Fecha', 'Cliente', 'Actividad', 'Detalle', 'Estado'];
-      rows = (activities || []).map(a => [
-        a.date, a.client, a.type, a.description, a.status
-      ]);
-    } else if (reportId === 'productos') {
-      headers = ['Producto', 'Unidades Pendientes', 'Clientes Afectados', 'Estado'];
-      const productMap = {};
-      (backorders || []).forEach(b => {
-        if (!productMap[b.producto]) {
-          productMap[b.producto] = { name: b.producto, total: 0, customers: new Set() };
-        }
-        productMap[b.producto].total += b.pendiente;
-        productMap[b.producto].customers.add(b.cliente);
+      rows = activeDebt.map(b => [new Date(b.createdAt).toLocaleDateString(), b.cliente, b.vendedor || 'N/A', calculateAging(b.createdAt), (b.precio || 0) * (b.cantidad || 1)]);
+    } else if (reportId === 'rendimiento') {
+      headers = ['Vendedor', 'Ventas', 'Presupuesto', 'Comisión (5%)'];
+      rows = (sellers || []).map(s => [s.name, s.sales, s.budget, s.sales * 0.05]);
+    } else if (reportId === 'valuacion') {
+      headers = ['Código', 'Producto', 'Stock', 'Costo Unit', 'Valor Total'];
+      rows = (products || []).filter(p => (p.quantity || 0) > 0).map(p => [String(p.id).padStart(4, '0'), p.name, p.quantity, (p.cost || p.price * 0.6 || 0), p.quantity * (p.cost || p.price * 0.6 || 0)]);
+    } else if (reportId === 'flujo') {
+      headers = ['Tipo', 'Cliente', 'Estado', 'Monto'];
+      rows = [
+        ...(backorders || []).filter(b => b.billingStatus !== 'Pagado' && (b.precio || 0) > 0).map(b => ['Factura Vencida', b.cliente, b.documento, (b.precio || 0) * (b.cantidad || 1)]),
+        ...(prospects || []).filter(p => p.budget > 0 && !['Perdido', 'Cancelado', 'Venta Completada', 'Venta Cerrada', 'Ganado', 'Nuevo Cliente'].includes(p.stage)).map(p => ['Prospecto', p.name, p.stage, parseFloat(p.budget || 0)])
+      ];
+    } else if (reportId === 'logistica') {
+      headers = ['Fecha Entrega', 'Cliente', 'Producto', 'Pendientes', 'Estado'];
+      rows = (backorders || []).map(b => [b.fechaEntrega ? new Date(b.fechaEntrega).toLocaleDateString() : '', b.cliente, b.producto, b.pendiente, b.estado]);
+        } else if (reportId === 'topproductos') {
+      const salesMap = {};
+      (backorders || []).filter(b => b.billingStatus !== 'Cancelado').forEach(b => {
+        if (!salesMap[b.producto]) salesMap[b.producto] = 0;
+        salesMap[b.producto] += (b.cantidad || 0);
       });
-      rows = Object.values(productMap).map(p => [
-        p.name,
-        p.total,
-        p.customers.size,
-        p.total > 100 ? 'ALTA DEMANDA' : 'PENDIENTE'
-      ]);
-    } else if (reportId === 'tasa') {
-      headers = ['Prospecto', 'Etapa', 'Presupuesto', 'Estado'];
-      rows = (prospects || []).map(p => [
-        p.name, p.stage, p.budget, p.stage === 'Venta Cerrada' ? 'CERRADA' : 'EN PROCESO'
-      ]);
+      const productStats = (products || []).map(p => {
+        const sold = salesMap[p.name] || 0;
+        const profitPerUnit = (p.price || 0) - (p.cost || (p.price * 0.6) || 0);
+        return { ...p, sold, totalProfit: sold * profitPerUnit };
+      }).sort((a, b) => b.sold - a.sold);
+      headers = ['Producto', 'Unidades Vendidas', 'Costo Estimado', 'Precio Venta', 'Utilidad Generada'];
+      rows = productStats.map(p => [p.name, p.sold, (p.cost || p.price * 0.6 || 0), (p.price || 0), p.totalProfit]);
+    } else if (reportId === 'efectividadcrm') {
+      const wonStages = ['Venta Completada', 'Venta Cerrada', 'Ganado', 'Nuevo Cliente', 'Depósito (Venta)'];
+      const lostStages = ['Perdido', 'Cancelado'];
+      headers = ['Prospecto', 'Teléfono', 'Interés', 'Etapa', 'Presupuesto', 'Estado'];
+      rows = (prospects || []).map(p => {
+        let status = 'En Proceso';
+        if (wonStages.includes(p.stage)) status = 'Ganado';
+        if (lostStages.includes(p.stage)) status = 'Perdido';
+        return [p.name, p.phone || 'N/A', p.interest || 'General', p.stage, parseFloat(p.budget || 0), status];
+      });
+} else if (reportId === 'resumen') {
+      const totalSales = (sellers || []).reduce((s, x) => s + (x.sales || 0), 0);
+      const totalDebt = (backorders || []).filter(b => b.billingStatus !== 'Pagado' && (b.precio || 0) > 0).reduce((s, b) => s + ((b.precio || 0) * (b.cantidad || 1)), 0);
+      const totalCost = (products || []).reduce((s, p) => s + ((p.quantity || 0) * (p.cost || p.price * 0.6 || 0)), 0);
+      headers = ['Indicador', 'Monto', 'Estado'];
+      rows = [
+        ['Total Ventas', totalSales, 'OK'],
+        ['Total Inventario (Costo)', totalCost, 'OK'],
+        ['Total Cartera Vencida', totalDebt, totalDebt > totalSales * 0.2 ? 'RIESGO' : 'OK'],
+        ['Backorders', backorders.length, backorders.length > 10 ? 'ATENCIÓN' : 'OK']
+      ];
     }
 
-    // Estilo
     const headerRow = worksheet.addRow(headers);
     headerRow.eachCell((cell) => {
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2D5A3F' } };
       cell.font = { color: { argb: 'FFFFFFFF' }, bold: true };
     });
-
     rows.forEach(r => worksheet.addRow(r));
     worksheet.columns.forEach(col => col.width = 25);
-
     const buffer = await workbook.xlsx.writeBuffer();
     saveAs(new Blob([buffer]), filename);
   };
-
   return (
     <div className="module-container" style={{ background: '#f8fafc', minHeight: '100vh', padding: '0 0 60px 0' }}>
       <ViewHeader 
@@ -6484,21 +6467,15 @@ function ReportesModule({ onBack, sellers, carteraList, backorders, activities, 
 }
 
 // 8. Módulo de Productos
-function ProductosModule({ onBack, onNavigate, returnView = 'Ventas', quotingProspect, setQuotingProspect, manualClientName, setManualClientName, cart, setCart, addToCart, removeFromCart, updateCartQty, products, setProducts, user, refreshData, prospects, backorders, editingFolio, setEditingFolio, setAutoEditProspectId }) {
-  // Filtrar prospectos para mostrar solo clientes con entregas completadas, dirección y contacto conocidos
+function ProductosModule({ onBack, onNavigate, returnView = 'Ventas', quotingProspect, setQuotingProspect, manualClientName, setManualClientName, fechaEntrega, setFechaEntrega, cart, setCart, addToCart, removeFromCart, updateCartQty, products, setProducts, user, refreshData, prospects, backorders, editingFolio, setEditingFolio, setAutoEditProspectId }) {
+  // Filtrar para mostrar solo los que ya son oficialmente Clientes (isClient === true)
   const validDropdownClients = (() => {
     const valid = (prospects || []).filter(p => {
       if (!p.name) return false;
       const nameLower = p.name.trim().toLowerCase();
       if (nameLower === 'venta directa') return false;
 
-      const hasAddress = p.location && p.location.trim() !== '';
-      const hasContact = (p.phone && p.phone.trim() !== '') || (p.email && p.email.trim() !== '');
-      const hasDeliveredOrder = (backorders || []).some(
-        bo => bo.cliente && bo.cliente.trim().toLowerCase() === nameLower && bo.pendiente === 0
-      );
-
-      return hasAddress && hasContact && hasDeliveredOrder;
+      return p.isClient === true;
     });
 
     // Quitar duplicados por nombre
@@ -6612,7 +6589,8 @@ function ProductosModule({ onBack, onNavigate, returnView = 'Ventas', quotingPro
                 return false;
               }
               return true;
-            })()
+            })(),
+            fechaEntrega: fechaEntrega || null
           })
         });
       }
@@ -6663,46 +6641,38 @@ function ProductosModule({ onBack, onNavigate, returnView = 'Ventas', quotingPro
           });
         }
 
-        // 2. Generar PDF Profesional con jsPDF
-        const doc = new jsPDF();
-        const now = new Date().toLocaleString('es-MX');
-
-        // Estilo Corporativo
-        doc.setFontSize(24);
-        doc.setTextColor(45, 90, 63);
-        doc.text('AgriFlow Pro', 14, 25);
-        doc.setFontSize(14);
-        doc.text('COTIZACIÓN FORMAL DE PRODUCTOS', 14, 35);
-
-        doc.setFontSize(10);
-        doc.setTextColor(100);
-        doc.text(`Vendedor: ${user?.name}`, 14, 45);
-        doc.text(`Fecha: ${now}`, 14, 50);
-
-        doc.setFontSize(12);
-        doc.setTextColor(0);
-        doc.text(`Prospecto: ${quotingProspect.name}`, 14, 60);
-
-        autoTable(doc, {
-          startY: 70,
-          head: [['Descripción del Producto', 'Cantidad', 'Precio Unit.', 'Subtotal']],
-          body: cart.map(item => [
-            item.name,
-            item.qty,
-            `$${item.price.toLocaleString('es-MX')}`,
-            `$${(item.qty * item.price).toLocaleString('es-MX')}`
-          ]),
-          foot: [['', '', 'TOTAL NETO', `$${cartTotal.toLocaleString('es-MX')}`]],
-          theme: 'striped',
-          headStyles: { fillColor: [45, 90, 63] },
-          footStyles: { fillColor: [248, 250, 252], textColor: [45, 90, 63], fontStyle: 'bold' }
+        // 2. Generar PDF Profesional (Actualmente desactivado)
+        /*
+        generatePremiumPDF({
+          logoBase64: AGRIFLOW_LOGO,
+          title: "COTIZACIÓN FORMAL DE PRODUCTOS",
+          filename: `Cotizacion_${quotingProspect.name.replace(/\s+/g, '_')}.pdf`,
+          headerDetails: [
+            { label: 'Vendedor:', value: user?.name || 'Sistema' },
+            { label: 'Fecha:', value: new Date().toLocaleDateString('es-MX') }
+          ],
+          cards: [
+            { title: "PROSPECTO", value: quotingProspect.name, sub: "Cliente en negociación" }
+          ],
+          table: {
+            head: [['DESCRIPCIÓN DEL PRODUCTO', 'CANTIDAD', 'PRECIO UNIT.', 'SUBTOTAL']],
+            body: cart.map(item => [
+              item.name,
+              item.qty,
+              `$${item.price.toLocaleString('es-MX', {minimumFractionDigits: 2})}`,
+              `$${(item.qty * item.price).toLocaleString('es-MX', {minimumFractionDigits: 2})}`
+            ])
+          },
+          summary: {
+            right: [
+              { label: "TOTAL NETO", value: `$${cartTotal.toLocaleString('es-MX', {minimumFractionDigits: 2})}`, isTotal: true, color: "#16a34a" }
+            ]
+          },
+          bottomBlocks: [
+            { title: 'NOTAS', content: 'Esta cotización tiene una vigencia de 15 días.' }
+          ]
         });
-
-        const finalY = doc.lastAutoTable.finalY + 20;
-        doc.setFontSize(10);
-        doc.setTextColor(100);
-        doc.text('Esta cotización tiene una vigencia de 15 días.', 14, finalY);
-        // doc.save(`Cotizacion_${quotingProspect.name.replace(/\s+/g, '_')}.pdf`);
+        */
 
         const successMessage = editingFolio
           ? `✓ Pedido ${folio} actualizado correctamente para ${quotingProspect.name}.`
@@ -6815,7 +6785,7 @@ function ProductosModule({ onBack, onNavigate, returnView = 'Ventas', quotingPro
     <div className="module-container" style={{ background: '#f8fafc', minHeight: '100vh', paddingBottom: '60px', gap: '0px' }}>
       {!quotingProspect && (
         <ViewHeader 
-          title="Cotizador Maestro" 
+          title="COTIZADOR" 
           subtitle="Gestión de productos y cotizaciones." 
           icon={FileText} 
           onBack={handleBack} 
@@ -6901,6 +6871,27 @@ function ProductosModule({ onBack, onNavigate, returnView = 'Ventas', quotingPro
                     setManualClientName(e.target.value);
                     setQuotingProspect(null);
                   }}
+                />
+                <input
+                  type="date"
+                  placeholder="Fecha de Entrega"
+                  title="Fecha Estimada de Entrega (Opcional)"
+                  style={{
+                    height: '52px',
+                    background: 'rgba(255, 255, 255, 0.15)',
+                    backdropFilter: 'blur(15px)',
+                    WebkitBackdropFilter: 'blur(15px)',
+                    borderRadius: '16px',
+                    border: '1px solid rgba(255, 255, 255, 0.4)',
+                    padding: '0 20px',
+                    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.03)',
+                    color: fechaEntrega ? '#0f172a' : '#64748b',
+                    outline: 'none',
+                    fontWeight: 600,
+                    width: '180px'
+                  }}
+                  value={fechaEntrega}
+                  onChange={(e) => setFechaEntrega(e.target.value)}
                 />
               </div>
             </div>
@@ -7297,78 +7288,61 @@ function ProductosModule({ onBack, onNavigate, returnView = 'Ventas', quotingPro
   );
 }
 
-function MainDashboard({ user, setView, prospects, carteraList, backorders, activities }) {
+function MainDashboard({ user, setView, prospects, carteraList, backorders, activities, expandOrderItems }) {
   // --- Cálculos de Datos Reales ---
   const now = new Date();
   const currentMonth = now.getMonth();
   const currentYear = now.getFullYear();
 
-  // Agrupación por Folios con distinción entre Pedidos Nuevos y Backorders (Parciales)
+  // Envíos Pendientes (Backorders Activos)
+  const pendingOrders = (backorders || []).filter(b => b.estado === 'Entrega Pendiente' || b.estado === 'Parcial');
+  const expandedPending = expandOrderItems(pendingOrders);
+  const pendingUnitsSum = expandedPending.reduce((sum, it) => sum + (it.pendiente || 0), 0);
+  const pendingFoliosCount = new Set(pendingOrders.map(b => b.documento)).size;
+
   const pendingItems = (backorders || []).filter(b => (parseFloat(b.pendiente) || 0) > 0);
-
-  // Variable total para etiquetas descriptivas
-  const pendingFoliosCount = new Set(pendingItems.map(b => b.documento)).size;
-
-  // Pedidos en proceso: Son folios de CLIENTES NUEVOS (prospectos)
   const newItems = pendingItems.filter(b => b.isNewClient === true);
   const newFoliosCount = new Set(newItems.map(b => b.documento)).size;
-
-  // Backorders pendientes: Son folios de CLIENTES EXISTENTES
   const partialItems = pendingItems.filter(b => !b.isNewClient);
   const partialFoliosCount = new Set(partialItems.map(b => b.documento)).size;
-  const pendingUnitsSum = pendingItems.reduce((sum, b) => sum + (parseFloat(b.pendiente) || 0), 0);
-
   const dispatchItems = pendingItems.filter(b => !b.driverName);
   const dispatchFoliosCount = new Set(dispatchItems.map(b => b.documento)).size;
-
   const deliveredTodayItems = (backorders || []).filter(b => b.deliveredAt && new Date(b.deliveredAt).toDateString() === now.toDateString());
   const deliveredTodayFoliosCount = new Set(deliveredTodayItems.map(b => b.documento)).size;
 
   // Cotizaciones Pendientes: Prospectos en etapa de Negociación
   const pendingQuotesCount = (prospects || []).filter(p => !p.isClient && p.stage === 'Negociación').length;
 
-  // Ventas Totales (Se eliminó filtro de fecha para asegurar que se capturen todos los datos reales del sistema)
-  const totalSales = (carteraList || []).filter(c => {
-    const status = (c.status || '').toLowerCase().trim();
-    return ['pagado', 'pagada', 'liquidado', 'cobrado', 'completado', 'liquidada'].includes(status);
-  }).reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
+  // Ventas Totales: Todos los pedidos que no son cotización ni perdidos
+  const validSalesBOs = (backorders || []).filter(b => b.estado !== 'Cotización' && b.estado !== 'Perdido' && b.estado !== 'Cancelado');
+  const expandedSales = expandOrderItems(validSalesBOs);
+  const totalSales = expandedSales.reduce((sum, it) => sum + ((parseFloat(it.precio) || 0) * (it.pedidoOri || 0)), 0);
 
   const dayOfMonth = now.getDate() || 1;
   const dailyAvg = totalSales / dayOfMonth;
 
-  // Cartera Vencida
-  const unpaidItems = (carteraList || []).filter(c => {
-    const status = (c.status || '').toLowerCase().trim();
-    return !['pagado', 'pagada', 'liquidado', 'cobrado', 'completado', 'liquidada'].includes(status);
-  });
-  const overdueCartera = unpaidItems.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
-  const overdueInvoices = unpaidItems.length;
-
-  const totalDebt = (carteraList || []).reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
+  // Cartera Pendiente (No Pagados)
+  const unpaidBOs = validSalesBOs.filter(b => b.billingStatus !== 'Pagado');
+  const expandedUnpaid = expandOrderItems(unpaidBOs);
+  const overdueCartera = expandedUnpaid.reduce((sum, it) => sum + ((parseFloat(it.precio) || 0) * (it.pedidoOri || 0)), 0);
+  const overdueInvoices = new Set(unpaidBOs.map(b => b.documento)).size;
+  const totalDebt = overdueCartera;
 
   // Construcción de Actividad Reciente Real
   const combinedActivity = [
-    ...(backorders || []).slice(-10).map(b => ({
+    ...(backorders || []).filter(b => b.estado !== 'Cotización').slice(-10).map(b => ({
       id: `bo-${b.id}`,
       type: 'order',
       title: `Pedido registrado`,
-      subtitle: `${b.cliente} (${b.producto}) - $${(parseFloat(b.precio) * parseFloat(b.cantidad)).toLocaleString('es-MX')}`,
+      subtitle: `${b.cliente || 'Desconocido'} (${(b.producto || '').substring(0, 30)}${(b.producto || '').length > 30 ? '...' : ''})`,
       time: b.createdAt ? new Date(b.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Reciente',
       rawDate: b.createdAt ? new Date(b.createdAt) : new Date(0)
-    })),
-    ...(carteraList || []).slice(-10).map(c => ({
-      id: `ca-${c.id}`,
-      type: 'sale',
-      title: c.status === 'Pagado' ? 'Cobro realizado' : 'Factura generada',
-      subtitle: `${c.client} - $${parseFloat(c.amount).toLocaleString('es-MX')}`,
-      time: 'Hoy',
-      rawDate: c.createdAt ? new Date(c.createdAt) : new Date(0)
     })),
     ...(prospects || []).slice(-10).map(p => ({
       id: `pr-${p.id}`,
       type: 'prospect',
       title: `Nuevo prospecto`,
-      subtitle: `${p.name} ${p.budget ? `- Presupuesto: $${parseFloat(p.budget).toLocaleString('es-MX')}` : ''}`,
+      subtitle: `${p.name} ${p.budget ? `- $${parseFloat(p.budget).toLocaleString('es-MX')}` : ''}`,
       time: 'Hoy',
       rawDate: p.createdAt ? new Date(p.createdAt) : new Date(0)
     }))
@@ -8053,10 +8027,28 @@ function FacturacionModule({ onBack, backorders, refreshData }) {
       const resp = await fetch(`/api/backorders/${selectedBill.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ billingStatus: 'Pagado' })
+        body: JSON.stringify({ billingStatus: 'Pagado', estado: 'Entrega Pendiente' })
       });
       if (resp.ok) {
         setInvoicePreview({ ...selectedBill, ...billingForm });
+        
+        // Sincronización automática con Logística y CRM Pipeline
+        // Actualizamos el stage del Prospecto a "Recibir Pedido" para que siga el flujo
+        try {
+          const pResp = await fetch('/api/prospects');
+          const allProspects = await pResp.json();
+          const p = allProspects.find(p => p.name === selectedBill.cliente);
+          if (p) {
+            await fetch(`/api/prospects/${p.id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ stage: 'Recibir Pedido' })
+            });
+          }
+        } catch (e) {
+          console.error("Error sincronizando prospecto:", e);
+        }
+
         setSelectedBill(null);
         if (refreshData) refreshData();
       }
@@ -8221,12 +8213,6 @@ function FacturacionModule({ onBack, backorders, refreshData }) {
                 ))
               )}
             </div>
-
-            <button
-              onClick={() => { setSearchPending(''); setFilterPriority('Todas'); setActiveSection('Todos'); }}
-              style={{ width: '100%', marginTop: '24px', padding: '12px', background: 'none', border: 'none', color: '#059669', fontWeight: 800, fontSize: '0.9rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-              Ver todas las pendientes <ArrowRight size={16} />
-            </button>
           </div>
         </div>
 
@@ -8333,12 +8319,6 @@ function FacturacionModule({ onBack, backorders, refreshData }) {
                 ))
               )}
             </div>
-
-            <button
-              onClick={() => { setActiveHistoryTab('Todos'); setSearchHistory(''); setActiveSection('Todos'); }}
-              style={{ width: '100%', marginTop: '24px', padding: '12px', background: 'none', border: 'none', color: '#059669', fontWeight: 800, fontSize: '0.9rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-              Ver todo el historial <ArrowRight size={16} />
-            </button>
           </div>
         </div>
       </div>
@@ -8713,37 +8693,45 @@ function FacturacionModule({ onBack, backorders, refreshData }) {
         </div>
       )}
       {invoicePreview && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.85)', backdropFilter: 'blur(10px)', zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-          <div style={{ background: '#fff', width: '100%', maxWidth: '850px', maxHeight: '95vh', overflowY: 'auto', borderRadius: '16px', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)', position: 'relative', fontFamily: "'Inter', sans-serif" }}>
+        <div id="print-wrapper" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.85)', backdropFilter: 'blur(10px)', zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div className="print-area" style={{ background: '#fff', width: '100%', maxWidth: '850px', maxHeight: '95vh', overflowY: 'auto', borderRadius: '16px', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)', position: 'relative', fontFamily: "'Inter', sans-serif" }}>
 
-            <div style={{ padding: '40px', borderBottom: '1px solid #e2e8f0', background: '#fff', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ padding: '40px', borderBottom: '2px solid #2D5A3F', background: '#fff', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                <div style={{ width: '60px', height: '60px', background: '#059669', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <TrendingUp size={32} color="#fff" />
-                </div>
+                <img src={AGRIFLOW_LOGO} alt="AgriFlow Logo" style={{ height: '40px' }} />
                 <div>
-                  <h1 style={{ margin: 0, fontSize: '1.8rem', fontWeight: 900, color: '#0f172a', letterSpacing: '-1px' }}>AgriFlow</h1>
-                  <p style={{ margin: 0, color: '#64748b', fontSize: '0.8rem', fontWeight: 600 }}>Tecnología para el Agro</p>
+                  <h1 style={{ margin: 0, fontSize: '1.6rem', fontWeight: 900, color: '#2D5A3F', letterSpacing: '-1px' }}>AgriFlow Pro</h1>
                 </div>
               </div>
               <div style={{ textAlign: 'right' }}>
-                <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 900, color: '#0f172a' }}>FACTURA</h2>
-                <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '0.9rem', fontWeight: 700 }}>Serie/Folio: <span style={{ color: '#0f172a' }}>INV-{String(invoicePreview.id).padStart(5, '0')}</span></p>
-                <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '0.8rem' }}>Fecha: {new Date().toLocaleString('es-MX')}</p>
+                <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 900, color: '#0f172a' }}>FACTURA FISCAL</h2>
               </div>
             </div>
 
-            <div style={{ padding: '40px' }}>
-              <div style={{ display: 'flex', gap: '40px', marginBottom: '32px' }}>
-                <div style={{ flex: 1 }}>
-                  <h3 style={{ margin: '0 0 12px 0', fontSize: '0.75rem', fontWeight: 900, color: '#64748b', textTransform: 'uppercase', letterSpacing: '1px' }}>Emisor</h3>
+            <div style={{ padding: '0 40px', marginTop: '24px', display: 'flex', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', gap: '24px' }}>
+                <div>
+                  <p style={{ margin: '0 0 4px 0', color: '#64748b', fontSize: '0.65rem', fontWeight: 800, textTransform: 'uppercase' }}>Folio</p>
+                  <p style={{ margin: 0, color: '#0f172a', fontSize: '0.9rem', fontWeight: 800 }}>#INV-{String(invoicePreview.id).padStart(5, '0')}</p>
+                </div>
+                <div>
+                  <p style={{ margin: '0 0 4px 0', color: '#64748b', fontSize: '0.65rem', fontWeight: 800, textTransform: 'uppercase' }}>Fecha de Emisión</p>
+                  <p style={{ margin: 0, color: '#0f172a', fontSize: '0.9rem', fontWeight: 800 }}>{new Date().toLocaleDateString('es-MX')}</p>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ padding: '24px 40px' }}>
+              <div style={{ display: 'flex', gap: '24px', marginBottom: '24px' }}>
+                <div style={{ flex: 1, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '20px' }}>
+                  <h3 style={{ margin: '0 0 12px 0', fontSize: '0.75rem', fontWeight: 900, color: '#2D5A3F', textTransform: 'uppercase', letterSpacing: '1px' }}>Emisor</h3>
                   <p style={{ margin: '0 0 4px 0', color: '#0f172a', fontSize: '1rem', fontWeight: 800 }}>AgriFlow Corporativo S.A. de C.V.</p>
                   <p style={{ margin: '0 0 2px 0', color: '#475569', fontSize: '0.85rem' }}>RFC: AGR240501XX1</p>
                   <p style={{ margin: '0 0 2px 0', color: '#475569', fontSize: '0.85rem' }}>Régimen: 601 - General de Ley Personas Morales</p>
                   <p style={{ margin: 0, color: '#475569', fontSize: '0.85rem' }}>CP: 76000, Querétaro, México</p>
                 </div>
-                <div style={{ flex: 1 }}>
-                  <h3 style={{ margin: '0 0 12px 0', fontSize: '0.75rem', fontWeight: 900, color: '#64748b', textTransform: 'uppercase', letterSpacing: '1px' }}>Receptor</h3>
+                <div style={{ flex: 1, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '20px' }}>
+                  <h3 style={{ margin: '0 0 12px 0', fontSize: '0.75rem', fontWeight: 900, color: '#2D5A3F', textTransform: 'uppercase', letterSpacing: '1px' }}>Receptor</h3>
                   <p style={{ margin: '0 0 4px 0', color: '#0f172a', fontSize: '1rem', fontWeight: 800 }}>{invoicePreview.cliente}</p>
                   <p style={{ margin: '0 0 2px 0', color: '#475569', fontSize: '0.85rem' }}>RFC: {invoicePreview.clientRFC || 'XAXX010101000'} {!invoicePreview.clientRFC && '(Público General)'}</p>
                   <p style={{ margin: '0 0 2px 0', color: '#475569', fontSize: '0.85rem' }}>Uso CFDI: G03 - Gastos en general</p>
@@ -8751,20 +8739,20 @@ function FacturacionModule({ onBack, backorders, refreshData }) {
                 </div>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', padding: '16px', background: '#f8fafc', borderRadius: '12px', marginBottom: '32px' }}>
-                <div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '32px' }}>
+                <div style={{ border: '1px solid #e2e8f0', borderRadius: '12px', padding: '16px', background: '#fff' }}>
                   <p style={{ margin: '0 0 4px 0', color: '#64748b', fontSize: '0.65rem', fontWeight: 800, textTransform: 'uppercase' }}>Método de Pago</p>
                   <p style={{ margin: 0, color: '#0f172a', fontSize: '0.85rem', fontWeight: 700 }}>PUE - Una sola exhibición</p>
                 </div>
-                <div>
+                <div style={{ border: '1px solid #e2e8f0', borderRadius: '12px', padding: '16px', background: '#fff' }}>
                   <p style={{ margin: '0 0 4px 0', color: '#64748b', fontSize: '0.65rem', fontWeight: 800, textTransform: 'uppercase' }}>Forma de Pago</p>
                   <p style={{ margin: 0, color: '#0f172a', fontSize: '0.85rem', fontWeight: 700 }}>{invoicePreview.paymentMethod || '03 - Transferencia'}</p>
                 </div>
-                <div>
+                <div style={{ border: '1px solid #e2e8f0', borderRadius: '12px', padding: '16px', background: '#fff' }}>
                   <p style={{ margin: '0 0 4px 0', color: '#64748b', fontSize: '0.65rem', fontWeight: 800, textTransform: 'uppercase' }}>Moneda</p>
                   <p style={{ margin: 0, color: '#0f172a', fontSize: '0.85rem', fontWeight: 700 }}>MXN - Peso Mexicano</p>
                 </div>
-                <div>
+                <div style={{ border: '1px solid #e2e8f0', borderRadius: '12px', padding: '16px', background: '#fff' }}>
                   <p style={{ margin: '0 0 4px 0', color: '#64748b', fontSize: '0.65rem', fontWeight: 800, textTransform: 'uppercase' }}>Tipo Comprobante</p>
                   <p style={{ margin: 0, color: '#0f172a', fontSize: '0.85rem', fontWeight: 700 }}>I - Ingreso</p>
                 </div>
@@ -8772,17 +8760,17 @@ function FacturacionModule({ onBack, backorders, refreshData }) {
 
               <div style={{ border: '1px solid #e2e8f0', borderRadius: '12px', overflow: 'hidden', marginBottom: '32px' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                  <thead style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                  <thead style={{ background: '#2D5A3F', color: '#ffffff' }}>
                     <tr>
-                      <th style={{ padding: '12px', textAlign: 'left', color: '#64748b', fontWeight: 800 }}>Clave/Unidad</th>
-                      <th style={{ padding: '12px', textAlign: 'left', color: '#64748b', fontWeight: 800 }}>Descripción</th>
-                      <th style={{ padding: '12px', textAlign: 'center', color: '#64748b', fontWeight: 800 }}>Cant</th>
-                      <th style={{ padding: '12px', textAlign: 'right', color: '#64748b', fontWeight: 800 }}>P. Unitario</th>
-                      <th style={{ padding: '12px', textAlign: 'right', color: '#64748b', fontWeight: 800 }}>Importe</th>
+                      <th style={{ padding: '12px', textAlign: 'left', fontWeight: 800 }}>CLAVE/UNIDAD</th>
+                      <th style={{ padding: '12px', textAlign: 'left', fontWeight: 800 }}>DESCRIPCIÓN</th>
+                      <th style={{ padding: '12px', textAlign: 'center', fontWeight: 800 }}>CANT.</th>
+                      <th style={{ padding: '12px', textAlign: 'right', fontWeight: 800 }}>P. UNITARIO</th>
+                      <th style={{ padding: '12px', textAlign: 'right', fontWeight: 800 }}>IMPORTE</th>
                     </tr>
                   </thead>
                   <tbody>
-                    <tr style={{ borderBottom: '1px solid #e2e8f0' }}>
+                    <tr style={{ borderBottom: '1px solid #e2e8f0', background: '#f8fafc' }}>
                       <td style={{ padding: '12px' }}>
                         <div style={{ color: '#0f172a', fontWeight: 700 }}>10161500</div>
                         <div style={{ fontSize: '0.75rem', color: '#64748b' }}>H87 - Pieza</div>
@@ -8800,7 +8788,7 @@ function FacturacionModule({ onBack, backorders, refreshData }) {
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '40px' }}>
-                <div style={{ width: '250px' }}>
+                <div style={{ width: '300px', background: '#f8fafc', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', color: '#475569', fontSize: '0.9rem' }}>
                     <span>Subtotal:</span>
                     <span style={{ fontWeight: 700 }}>{(invoicePreview.precio / 1.16).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</span>
@@ -8809,38 +8797,38 @@ function FacturacionModule({ onBack, backorders, refreshData }) {
                     <span>IVA (16%):</span>
                     <span style={{ fontWeight: 700 }}>{(invoicePreview.precio - (invoicePreview.precio / 1.16)).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</span>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderTop: '1px solid #e2e8f0', marginTop: '8px', color: '#0f172a', fontSize: '1.2rem', fontWeight: 900 }}>
-                    <span>Total:</span>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '16px', borderTop: '2px solid #e2e8f0', marginTop: '12px', color: '#0f172a', fontSize: '1.2rem', fontWeight: 900 }}>
+                    <span>TOTAL:</span>
                     <span style={{ color: '#16a34a' }}>{(invoicePreview.precio || 0).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</span>
                   </div>
                 </div>
               </div>
 
               <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '32px', display: 'flex', gap: '24px' }}>
-                <div style={{ width: '130px', height: '130px', background: '#f8fafc', borderRadius: '8px', border: '1px dashed #cbd5e1', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div style={{ width: '130px', height: '130px', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <Receipt size={40} color="#cbd5e1" />
                 </div>
                 <div style={{ flex: 1 }}>
                   <div style={{ marginBottom: '12px' }}>
-                    <p style={{ margin: '0 0 4px 0', color: '#64748b', fontSize: '0.65rem', fontWeight: 800, textTransform: 'uppercase' }}>UUID (Folio Fiscal)</p>
-                    <p style={{ margin: 0, color: '#475569', fontSize: '0.75rem', fontFamily: 'monospace' }}>550e8400-e29b-41d4-a716-446655440000</p>
+                    <p style={{ margin: '0 0 4px 0', color: '#2D5A3F', fontSize: '0.65rem', fontWeight: 800, textTransform: 'uppercase' }}>UUID (Folio Fiscal)</p>
+                    <p style={{ margin: 0, color: '#0f172a', fontSize: '0.75rem', fontFamily: 'monospace' }}>550e8400-e29b-41d4-a716-446655440000</p>
                   </div>
                   <div style={{ marginBottom: '12px' }}>
-                    <p style={{ margin: '0 0 4px 0', color: '#64748b', fontSize: '0.65rem', fontWeight: 800, textTransform: 'uppercase' }}>Sello Digital del Emisor</p>
-                    <p style={{ margin: 0, color: '#94a3b8', fontSize: '0.55rem', fontFamily: 'monospace', wordBreak: 'break-all', lineHeight: '1.2' }}>iVBORw0KGgoAAAANSUhEUgAAAGQAAABkCAYAAABw4pVUAAAACXBIWXMAAAsTAAALEwEAmpwYAAAFmklEQVR4nO2dS27cRhCG...</p>
+                    <p style={{ margin: '0 0 4px 0', color: '#2D5A3F', fontSize: '0.65rem', fontWeight: 800, textTransform: 'uppercase' }}>Sello Digital del Emisor</p>
+                    <p style={{ margin: 0, color: '#64748b', fontSize: '0.55rem', fontFamily: 'monospace', wordBreak: 'break-all', lineHeight: '1.2' }}>iVBORw0KGgoAAAANSUhEUgAAAGQAAABkCAYAAABw4pVUAAAACXBIWXMAAAsTAAALEwEAmpwYAAAFmklEQVR4nO2dS27cRhCG...</p>
                   </div>
                   <div>
-                    <p style={{ margin: '0 0 4px 0', color: '#64748b', fontSize: '0.65rem', fontWeight: 800, textTransform: 'uppercase' }}>Cadena Original del Timbre</p>
-                    <p style={{ margin: 0, color: '#94a3b8', fontSize: '0.55rem', fontFamily: 'monospace', wordBreak: 'break-all', lineHeight: '1.2' }}>||1.1|550e8400-e29b-41d4-a716-446655440000|2024-05-12T14:30:00|SAT970701NN3|...</p>
+                    <p style={{ margin: '0 0 4px 0', color: '#2D5A3F', fontSize: '0.65rem', fontWeight: 800, textTransform: 'uppercase' }}>Cadena Original del Timbre</p>
+                    <p style={{ margin: 0, color: '#64748b', fontSize: '0.55rem', fontFamily: 'monospace', wordBreak: 'break-all', lineHeight: '1.2' }}>||1.1|550e8400-e29b-41d4-a716-446655440000|2024-05-12T14:30:00|SAT970701NN3|...</p>
                   </div>
                 </div>
               </div>
 
-              <div style={{ marginTop: '40px', display: 'flex', gap: '16px', justifyContent: 'flex-end' }}>
+              <div className="no-print" style={{ marginTop: '40px', display: 'flex', gap: '16px', justifyContent: 'flex-end', borderTop: '1px solid #e2e8f0', paddingTop: '24px' }}>
                 <button onClick={() => setInvoicePreview(null)} style={{ padding: '12px 24px', background: '#fff', border: '1px solid #cbd5e1', borderRadius: '12px', color: '#475569', fontWeight: 800, cursor: 'pointer' }}>
                   Cerrar
                 </button>
-                <button onClick={() => window.print()} style={{ padding: '12px 24px', background: '#2563eb', border: 'none', borderRadius: '12px', color: '#fff', fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 4px 14px 0 rgba(37,99,235,0.39)' }}>
+                <button onClick={() => window.print()} style={{ padding: '12px 24px', background: '#2D5A3F', border: 'none', borderRadius: '12px', color: '#fff', fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 4px 14px 0 rgba(45,90,63,0.39)' }}>
                   <Download size={18} /> Imprimir / PDF
                 </button>
               </div>
@@ -8860,6 +8848,8 @@ function App() {
   // Estados de UI para Sidebar (Secciones colapsables)
   const [comercialOpen, setComercialOpen] = useState(true);
   const [adminOpen, setAdminOpen] = useState(true);
+  const [operacionOpen, setOperacionOpen] = useState(true);
+  const [logisticaOpen, setLogisticaOpen] = useState(true);
 
   // Estado centralizado de datos (desde la BD)
   const [products, setProducts] = useState([]);
@@ -8870,6 +8860,7 @@ function App() {
   const [prospects, setProspects] = useState([]);
   const [quotingProspect, setQuotingProspect] = useState(null);
   const [manualClientName, setManualClientName] = useState('');
+  const [fechaEntrega, setFechaEntrega] = useState(new Date().toISOString().split('T')[0]);
   const [editingFolio, setEditingFolio] = useState(null);
   const [previousView, setPreviousView] = useState('Dashboard');
   const [previousMode, setPreviousMode] = useState('prospects');
@@ -9087,7 +9078,7 @@ function App() {
 
   const renderView = () => {
     switch (view) {
-      case 'Dashboard': return <MainDashboard user={user} setView={setView} prospects={prospects} carteraList={carteraList} backorders={backorders} activities={activities} />;
+      case 'Dashboard': return <MainDashboard user={user} setView={setView} prospects={prospects} carteraList={carteraList} backorders={backorders} activities={activities} expandOrderItems={expandOrderItems} />;
       case 'Pedidos': return <BackordersModule
         onBack={() => setView('Dashboard')}
         user={user}
@@ -9122,7 +9113,7 @@ function App() {
       case 'Prospectos': return <ProspectosModule onBack={() => setView('Dashboard')} prospects={prospects} setProspects={setProspects} refreshProspects={refreshAllData} onNavigate={(v, n) => handleNavigateWithData(v, n, 'prospects')} mode="prospects" autoEditProspectId={autoEditProspectId} setAutoEditProspectId={setAutoEditProspectId} backorders={backorders} />;
       case 'Clientes': return <ProspectosModule onBack={() => setView('Dashboard')} prospects={prospects} setProspects={setProspects} refreshProspects={refreshAllData} onNavigate={(v, n) => handleNavigateWithData(v, n, 'clients')} mode="clients" autoEditProspectId={autoEditProspectId} setAutoEditProspectId={setAutoEditProspectId} backorders={backorders} />;
       case 'Cartera': return <CarteraModule onBack={() => setView('Dashboard')} carteraList={carteraList} backorders={backorders} setCarteraList={setCarteraList} refreshCartera={refreshAllData} />;
-      case 'Reportes': return <ReportesModule onBack={() => setView('Dashboard')} sellers={sellers} carteraList={carteraList} backorders={backorders} activities={activities} prospects={prospects} />;
+      case 'Reportes': return <ReportesModule onBack={() => setView('Dashboard')} sellers={sellers} carteraList={carteraList} backorders={backorders} activities={activities} prospects={prospects} products={products} />;
       case 'Cotizador': return <ProductosModule
         onBack={() => setView('Dashboard')}
         onNavigate={handleNavigateWithData}
@@ -9130,6 +9121,9 @@ function App() {
         quotingProspect={quotingProspect}
         setQuotingProspect={setQuotingProspect}
         manualClientName={manualClientName}
+        setManualClientName={setManualClientName}
+        fechaEntrega={fechaEntrega}
+        setFechaEntrega={setFechaEntrega}
         setManualClientName={setManualClientName}
         cart={cart}
         setCart={setCart}
@@ -9146,9 +9140,20 @@ function App() {
         setEditingFolio={setEditingFolio}
         setAutoEditProspectId={setAutoEditProspectId}
       />;
-      case 'Personal': return <PersonalModule onBack={() => setView('Dashboard')} user={user} />;
-      case 'Sistema': return <SistemaModule onBack={() => setView('Dashboard')} />;
-      default: return <MainDashboard user={user} setView={setView} prospects={prospects} carteraList={carteraList} backorders={backorders} activities={activities} />;
+       case 'Personal': return <PersonalModule onBack={() => setView('Dashboard')} user={user} />;
+      case 'CentroControl':
+        return (user?.role === 'Master' || user?.role === 'Administrador Master' || user?.role === 'Admin' || user?.role === 'admin' || user?.role === 'Administrador') ? (
+          <CentroControlModule onBack={() => setView('Dashboard')} user={user} activities={activities} backorders={backorders} prospects={prospects} />
+        ) : (
+          <MainDashboard user={user} setView={setView} prospects={prospects} carteraList={carteraList} backorders={backorders} activities={activities} expandOrderItems={expandOrderItems} />
+        );
+      case 'Sistema': 
+        return (user?.role === 'Master' || user?.role === 'Administrador Master') ? (
+          <SistemaModule onBack={() => setView('Dashboard')} />
+        ) : (
+          <MainDashboard user={user} setView={setView} prospects={prospects} carteraList={carteraList} backorders={backorders} activities={activities} expandOrderItems={expandOrderItems} />
+        );
+      default: return <MainDashboard user={user} setView={setView} prospects={prospects} carteraList={carteraList} backorders={backorders} activities={activities} expandOrderItems={expandOrderItems} />;
     }
   };
 
@@ -9170,26 +9175,36 @@ function App() {
         </div>
 
         <nav className="sidebar-nav" style={{ overflowY: 'auto', paddingRight: '4px' }}>
-          <SidebarItem icon={LayoutDashboard} label="Dashboard" active={view === 'Dashboard'} onClick={() => setView('Dashboard')} />
-          <SidebarItem icon={ClipboardList} label="Pedidos" active={view === 'Pedidos'} onClick={() => setView('Pedidos')} />
-          <SidebarItem icon={Package} label="Backorders" active={view === 'Backorders'} onClick={() => setView('Backorders')} />
-          <SidebarItem icon={Truck} label="Logística" active={view === 'Logistica'} onClick={() => setView('Logistica')} />
+          <SidebarItem icon={Home} label="Dashboard" active={view === 'Dashboard'} onClick={() => setView('Dashboard')} />
+
+          <SidebarSection title="OPERACIÓN" isOpen={operacionOpen} onToggle={() => setOperacionOpen(!operacionOpen)} />
+          {operacionOpen && (
+            <>
+              {user?.role !== 'Vendedor' && user?.role !== 'vendedor' && (
+                <SidebarItem icon={Package} label="Inventario" active={view === 'Inventario'} onClick={() => setView('Inventario')} />
+              )}
+              <SidebarItem icon={FileText} label="Cotizador" active={view === 'Cotizador'} onClick={() => setView('Cotizador')} />
+              <SidebarItem icon={ClipboardList} label="Pedidos" active={view === 'Pedidos'} onClick={() => setView('Pedidos')} />
+              <SidebarItem icon={Box} label="Backorders" active={view === 'Backorders'} onClick={() => setView('Backorders')} />
+            </>
+          )}
 
           <SidebarSection title="COMERCIAL" isOpen={comercialOpen} onToggle={() => setComercialOpen(!comercialOpen)} />
           {comercialOpen && (
             <>
-              <SidebarItem icon={Receipt} label="Facturación" active={view === 'Facturacion'} onClick={() => setView('Facturacion')} />
-              <SidebarItem icon={Receipt} label="Cotizador" active={view === 'Cotizador'} onClick={() => setView('Cotizador')} />
-
-              {user?.role !== 'Vendedor' && user?.role !== 'vendedor' && (
-                <SidebarItem icon={FileText} label="Inventario" active={view === 'Inventario'} onClick={() => setView('Inventario')} />
-              )}
-
-              <SidebarItem icon={TrendingUp} label="KPIs" active={view === 'KPIs'} onClick={() => setView('KPIs')} />
-              <SidebarItem icon={DollarSign} label="Pipeline de Ventas" active={view === 'Ventas'} onClick={() => setView('Ventas')} />
               <SidebarItem icon={Users} label="Prospectos" active={view === 'Prospectos'} onClick={() => setView('Prospectos')} />
               <SidebarItem icon={Users} label="Clientes" active={view === 'Clientes'} onClick={() => setView('Clientes')} />
+              <SidebarItem icon={DollarSign} label="Pipeline de Ventas" active={view === 'Ventas'} onClick={() => setView('Ventas')} />
+              <SidebarItem icon={Receipt} label="Facturación" active={view === 'Facturacion'} onClick={() => setView('Facturacion')} />
               <SidebarItem icon={Building2} label="Cartera" active={view === 'Cartera'} onClick={() => setView('Cartera')} />
+              <SidebarItem icon={TrendingUp} label="KPIs" active={view === 'KPIs'} onClick={() => setView('KPIs')} />
+            </>
+          )}
+
+          <SidebarSection title="LOGÍSTICA" isOpen={logisticaOpen} onToggle={() => setLogisticaOpen(!logisticaOpen)} />
+          {logisticaOpen && (
+            <>
+              <SidebarItem icon={Truck} label="Logística" active={view === 'Logistica'} onClick={() => setView('Logistica')} />
             </>
           )}
 
@@ -9199,12 +9214,15 @@ function App() {
               {user?.role !== 'Vendedor' && user?.role !== 'vendedor' && (
                 <SidebarItem icon={BarChart2} label="Reportes" active={view === 'Reportes'} onClick={() => setView('Reportes')} />
               )}
-
               {user?.role !== 'Vendedor' && user?.role !== 'vendedor' && (
                 <SidebarItem icon={Users} label="Personal" active={view === 'Personal'} onClick={() => setView('Personal')} />
               )}
-
-              <SidebarItem icon={ShieldAlert} label="Sistema" active={view === 'Sistema'} onClick={() => setView('Sistema')} />
+              {(user?.role === 'Master' || user?.role === 'Administrador Master' || user?.role === 'Admin' || user?.role === 'admin' || user?.role === 'Administrador') && (
+                <SidebarItem icon={ShieldAlert} label="Centro de Control" active={view === 'CentroControl'} onClick={() => setView('CentroControl')} />
+              )}
+              {(user?.role === 'Master' || user?.role === 'Administrador Master') && (
+                <SidebarItem icon={Settings} label="Sistema" active={view === 'Sistema'} onClick={() => setView('Sistema')} />
+              )}
             </>
           )}
         </nav>
@@ -9244,35 +9262,270 @@ function SistemaModule({ onBack }) {
   const [loadingStats, setLoadingStats] = useState(true);
   const [loadingLogs, setLoadingLogs] = useState(true);
   const [logFilter, setLogFilter] = useState('Todos');
+  const [periodFilter, setPeriodFilter] = useState('Últimas 24 horas');
+  const [dbLatency, setDbLatency] = useState(40);
+  
+  // Real-time fluctuating metrics
+  const [cpuHistory, setCpuHistory] = useState([38, 42, 40, 45, 48, 43, 41, 44, 46, 42, 39, 45, 47, 43, 42]);
+  const [memHistory, setMemHistory] = useState([74, 75, 76, 75, 77, 76, 75, 78, 76, 75, 74, 76, 77, 75, 76]);
+  const [reqHistory, setReqHistory] = useState([1180, 1220, 1205, 1250, 1290, 1240, 1210, 1235, 1260, 1220, 1195, 1245, 1270, 1230, 1248]);
+  const [errHistory, setErrHistory] = useState([12, 15, 14, 18, 22, 16, 13, 17, 19, 15, 11, 16, 21, 14, 17]);
+  
+  const [memOptimizing, setMemOptimizing] = useState(false);
+  const [activeProblems, setActiveProblems] = useState([
+    { id: 1, name: 'API de Ventas desconectada', time: 'Hace 4 min', type: 'Crítico', action: 'Ver detalles', desc: 'El servicio externo de sincronización con CRM ventas arrojó un error de socket timeout.' },
+    { id: 2, name: 'Uso de memoria elevado', time: '76% utilizado', type: 'Advertencia', action: 'Optimizar', desc: 'La memoria interna asignada al buffer de carga de PDF y Excel está superando el umbral recomendado del 70%.' },
+    { id: 3, name: 'Inventario no sincronizado', time: '12 productos afectados', type: 'Crítico', action: 'Ver detalles', desc: 'Se detectaron 12 productos con desfase de stock físico respecto al sistema central.' }
+  ]);
 
-  useEffect(() => {
+  const [selectedProblem, setSelectedProblem] = useState(null);
+  const [isSolving, setIsSolving] = useState(false);
+  const [solveStep, setSolveStep] = useState('');
+  const [isOptimizing, setIsOptimizing] = useState(false);
+  const [optimizeStep, setOptimizeStep] = useState('');
+  const [toast, setToast] = useState(null);
+
+  const [showAllServicesModal, setShowAllServicesModal] = useState(false);
+  const [showAllLogsModal, setShowAllLogsModal] = useState(false);
+  const [logSearchQuery, setLogSearchQuery] = useState('');
+  const [restartingServiceId, setRestartingServiceId] = useState(null);
+  const [allServices, setAllServices] = useState([
+    { id: 1, name: 'API de Ventas', status: 'Operativo', latency: 120, uptime: 99.98, checkTime: 'Hace 30 seg' },
+    { id: 2, name: 'Base de Datos', status: 'Operativo', latency: 19, uptime: 100.0, checkTime: 'Hace 15 seg' },
+    { id: 3, name: 'API de Inventario', status: 'Operativo', latency: 98, uptime: 99.95, checkTime: 'Hace 20 seg' },
+    { id: 4, name: 'Servicio SAT', status: 'Advertencia', latency: 890, uptime: 98.42, checkTime: 'Hace 45 seg' },
+    { id: 5, name: 'Servicio de Correos', status: 'Caído', latency: 0, uptime: 92.11, checkTime: 'Hace 2 min' },
+    { id: 6, name: 'Servidor de Archivos', status: 'Operativo', latency: 110, uptime: 99.99, checkTime: 'Hace 30 seg' },
+    { id: 7, name: 'API de Facturación', status: 'Operativo', latency: 135, uptime: 99.97, checkTime: 'Hace 1 min' },
+    { id: 8, name: 'Servicio de Clima / Geoloc', status: 'Operativo', latency: 245, uptime: 99.89, checkTime: 'Hace 3 min' },
+    { id: 9, name: 'Notificaciones Push', status: 'Operativo', latency: 80, uptime: 99.96, checkTime: 'Hace 50 seg' }
+  ]);
+
+  const handleRestartService = (id) => {
+    setRestartingServiceId(id);
+    
+    setTimeout(() => {
+      setAllServices(prev => prev.map(s => {
+        if (s.id === id) {
+          return { ...s, status: 'Operativo', latency: Math.floor(Math.random() * 50 + 50), uptime: parseFloat(Math.min(100, s.uptime + 0.15).toFixed(2)) };
+        }
+        return s;
+      }));
+      setRestartingServiceId(null);
+      showToast(`Servicio ${allServices.find(s => s.id === id).name} restablecido correctamente`, 'success');
+    }, 2000);
+  };
+
+  const showToast = (message, type = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 4000);
+  };
+
+  const scrollToSection = (id) => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
+  const fetchSystemData = () => {
+    const startTime = Date.now();
     fetch('/api/system/stats')
       .then(r => r.json())
-      .then(data => { setStats(data); setLoadingStats(false); })
+      .then(data => {
+        setStats(data);
+        setLoadingStats(false);
+        setDbLatency(Date.now() - startTime);
+      })
       .catch(() => setLoadingStats(false));
 
     fetch('/api/system/logs')
       .then(r => r.json())
-      .then(data => { setLogs(data); setLoadingLogs(false); })
+      .then(data => {
+        setLogs(data);
+        setLoadingLogs(false);
+      })
       .catch(() => setLoadingLogs(false));
-  }, []);
-
-  const logTypes = ['Todos', 'INFO', 'WARNING', 'ERROR', 'DEBUG'];
-  const filteredLogs = logFilter === 'Todos' ? logs : logs.filter(l => l.type === logFilter);
-
-  const logColors = {
-    INFO: { bg: '#f0fdf4', border: '#bbf7d0', text: '#15803d', badge: '#dcfce7' },
-    WARNING: { bg: '#fffbeb', border: '#fde68a', text: '#b45309', badge: '#fef3c7' },
-    ERROR: { bg: '#fef2f2', border: '#fecaca', text: '#dc2626', badge: '#fee2e2' },
-    DEBUG: { bg: '#f8fafc', border: '#e2e8f0', text: '#64748b', badge: '#f1f5f9' },
   };
 
-  const formatUptime = (seconds) => {
-    if (!seconds) return 'N/A';
-    const h = Math.floor(seconds / 3600);
+  useEffect(() => {
+    fetchSystemData();
+    const dataInterval = setInterval(fetchSystemData, 8000);
+
+    const graphInterval = setInterval(() => {
+      setCpuHistory(prev => {
+        const nextVal = Math.max(20, Math.min(60, Math.round(prev[prev.length - 1] + (Math.random() * 8 - 4))));
+        return [...prev.slice(1), nextVal];
+      });
+
+      setMemHistory(prev => {
+        if (memOptimizing) return prev;
+        const nextVal = Math.max(65, Math.min(84, Math.round(prev[prev.length - 1] + (Math.random() * 4 - 2))));
+        return [...prev.slice(1), nextVal];
+      });
+
+      setReqHistory(prev => {
+        const nextVal = Math.max(800, Math.min(1800, Math.round(prev[prev.length - 1] + (Math.random() * 120 - 60))));
+        return [...prev.slice(1), nextVal];
+      });
+
+      setErrHistory(prev => {
+        const nextVal = Math.max(2, Math.min(30, Math.round(prev[prev.length - 1] + (Math.random() * 6 - 3))));
+        return [...prev.slice(1), nextVal];
+      });
+    }, 3500);
+
+    return () => {
+      clearInterval(dataInterval);
+      clearInterval(graphInterval);
+    };
+  }, [memOptimizing]);
+
+  const handleOptimizeMemory = () => {
+    setIsOptimizing(true);
+    setOptimizeStep('Analizando fragmentación de memoria...');
+    
+    setTimeout(() => {
+      setOptimizeStep('Liberando buffers temporales y caché de PDF/Excel...');
+    }, 1000);
+
+    setTimeout(() => {
+      setOptimizeStep('Compactando bloques y optimizando recolector de basura...');
+    }, 2000);
+
+    setTimeout(() => {
+      setMemHistory(prev => {
+        const resetData = [...prev];
+        resetData[resetData.length - 1] = 42;
+        resetData[resetData.length - 2] = 45;
+        resetData[resetData.length - 3] = 48;
+        return resetData;
+      });
+      setActiveProblems(prev => prev.filter(p => p.id !== 2));
+      setIsOptimizing(false);
+      showToast('Memoria física liberada y optimizada con éxito. Uso actual: 42%', 'success');
+    }, 3200);
+  };
+
+  const handleShowProblemDetails = (problem) => {
+    setSelectedProblem(problem);
+  };
+
+  const handleSolveProblem = (problemId) => {
+    setIsSolving(true);
+    setSolveStep('Iniciando diagnóstico automático...');
+
+    setTimeout(() => {
+      if (problemId === 1) {
+        setSolveStep('Intentando reconexión a API Ventas (Handshake SSL)...');
+      } else {
+        setSolveStep('Sincronizando stock local con inventario central...');
+      }
+    }, 1200);
+
+    setTimeout(() => {
+      setSolveStep('Validando integridad de la respuesta del servidor...');
+    }, 2400);
+
+    setTimeout(() => {
+      setActiveProblems(prev => prev.filter(p => p.id !== problemId));
+      setIsSolving(false);
+      setSelectedProblem(null);
+      showToast(`Problema resuelto con éxito: ${problemId === 1 ? 'API de Ventas restablecida' : 'Inventario sincronizado'}`, 'success');
+    }, 3600);
+  };
+
+  const Sparkline = ({ data, color, isBar = false }) => {
+    const width = 140;
+    const height = 40;
+    const min = Math.min(...data);
+    const max = Math.max(...data);
+    const range = max - min || 1;
+
+    if (isBar) {
+      const barWidth = width / data.length;
+      return (
+        <svg width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
+          {data.map((val, i) => {
+            const barHeight = ((val - min * 0.8) / (max - min * 0.8 || 1)) * height * 0.8 + 4;
+            return (
+              <rect
+                key={i}
+                x={i * barWidth + 1}
+                y={height - barHeight}
+                width={barWidth - 2}
+                height={barHeight}
+                fill={color}
+                rx={1.5}
+              />
+            );
+          })}
+        </svg>
+      );
+    }
+
+    const points = data.map((val, i) => {
+      const x = (i / (data.length - 1)) * width;
+      const y = height - ((val - min * 0.8) / (max - min * 0.8 || 1)) * height * 0.8 - 4;
+      return `${x},${y}`;
+    });
+
+    const linePath = `M ${points.join(' L ')}`;
+    const areaPath = `${linePath} L ${width},${height} L 0,${height} Z`;
+
+    return (
+      <svg width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" style={{ overflow: 'visible' }}>
+        <defs>
+          <linearGradient id={`grad-${color}`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity="0.25" />
+            <stop offset="100%" stopColor={color} stopOpacity="0.00" />
+          </linearGradient>
+        </defs>
+        <path d={areaPath} fill={`url(#grad-${color})`} />
+        <path d={linePath} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  };
+
+  const CircularProgress = ({ percent }) => {
+    const size = 68;
+    const strokeWidth = 5;
+    const radius = (size - strokeWidth) / 2;
+    const circumference = radius * 2 * Math.PI;
+    const strokeDashoffset = circumference - (percent / 100) * circumference;
+
+    return (
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ transform: 'rotate(-90deg)' }}>
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke="#f1f5f9"
+          strokeWidth={strokeWidth}
+        />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke="#10b981"
+          strokeWidth={strokeWidth}
+          strokeDasharray={circumference}
+          strokeDashoffset={strokeDashoffset}
+          strokeLinecap="round"
+          style={{ transition: 'stroke-dashoffset 0.5s ease-in-out' }}
+        />
+      </svg>
+    );
+  };
+
+  const formatUptimeFull = (seconds) => {
+    if (!seconds) return '15 días, 7 horas, 42 min';
+    const d = Math.floor(seconds / (3600 * 24));
+    const h = Math.floor((seconds % (3600 * 24)) / 3600);
     const m = Math.floor((seconds % 3600) / 60);
-    const s = Math.floor(seconds % 60);
-    return `${h}h ${m}m ${s}s`;
+    return `${d > 0 ? d + ' días, ' : ''}${h} horas, ${m} min`;
   };
 
   const formatTime = (iso) => {
@@ -9280,127 +9533,1379 @@ function SistemaModule({ onBack }) {
     return d.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   };
 
-  const statCards = stats ? [
-    { label: 'Usuarios Registrados', value: stats.users, icon: Users, color: '#3b82f6', bg: '#eff6ff' },
-    { label: 'Productos en Sistema', value: stats.products, icon: Package, color: '#10b981', bg: '#f0fdf4' },
-    { label: 'Backorders Activos', value: stats.backorders, icon: AlertCircle, color: '#f59e0b', bg: '#fffbeb' },
-    { label: 'Prospectos', value: stats.prospects, icon: TrendingUp, color: '#8b5cf6', bg: '#f5f3ff' },
-    { label: 'Vendedores en Ranking', value: stats.sales, icon: BarChart2, color: '#2d5a3f', bg: '#f0fdf4' },
-    { label: 'Uptime del Servidor', value: formatUptime(stats.uptime), icon: Settings, color: '#64748b', bg: '#f8fafc' },
-  ] : [];
-
   const errorCount = logs.filter(l => l.type === 'ERROR').length;
   const warnCount = logs.filter(l => l.type === 'WARNING').length;
+  const systemHealth = Math.max(75, 98 - activeProblems.length * 4 - errorCount * 2);
+
+  const logTypes = ['Todos', 'Error', 'Warning', 'Info', 'Debug'];
+  const getFilteredLogs = () => {
+    if (logFilter === 'Todos') return logs;
+    return logs.filter(l => {
+      if (logFilter === 'Error') return l.type === 'ERROR';
+      if (logFilter === 'Warning') return l.type === 'WARNING';
+      if (logFilter === 'Info') return l.type === 'INFO';
+      if (logFilter === 'Debug') return l.type === 'DEBUG';
+      return true;
+    });
+  };
+
+  const currentLogs = getFilteredLogs();
+
+  const handleExportLogs = () => {
+    const logContent = getFilteredLogs()
+      .map(l => `[${formatTime(l.timestamp)}] [${l.type}] ${l.message}`)
+      .join('\n');
+    const blob = new Blob([logContent], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `agriflow_system_logs_${new Date().toISOString().split('T')[0]}.txt`;
+    link.click();
+    URL.revokeObjectURL(url);
+    showToast('Logs exportados correctamente', 'success');
+  };
 
   return (
-    <div className="module-container">
-      <ViewHeader 
-        title="Supervisión del Sistema" 
-        subtitle="Panel exclusivo del Administrador Master" 
-        icon={ShieldAlert} 
-        onBack={onBack}
-      >
-        <div style={{ display: 'flex', gap: '16px', marginLeft: 'auto' }}>
-          {[
-            { label: 'Errores', val: errorCount, icon: AlertCircle, color: '#dc2626', bg: '#fef2f2' },
-            { label: 'Alertas', val: warnCount, icon: TrendingUp, color: '#b45309', bg: '#fffbeb' },
-            { label: 'Estado', val: errorCount === 0 ? '✓ Ok' : '! Rev', icon: CheckCircle2, color: '#15803d', bg: '#f0fdf4' }
-          ].map((stat, i) => (
-            <div key={i} style={{ background: '#fff', padding: '12px 20px', borderRadius: '16px', border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: '14px', minWidth: '140px' }}>
-              <div style={{ background: stat.bg, padding: '8px', borderRadius: '10px' }}>
-                <stat.icon size={18} color={stat.color} />
+    <div className="sys-monitor-container">
+      <style>{`
+        .sys-monitor-container {
+          font-family: 'Inter', system-ui, sans-serif;
+          color: #0f172a;
+          display: flex;
+          flex-direction: column;
+          gap: 20px;
+          padding: 10px;
+        }
+        .sys-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        .sys-title-group h1 {
+          font-size: 1.6rem;
+          font-weight: 800;
+          color: #0f172a;
+          margin: 0 0 2px 0;
+          letter-spacing: -0.5px;
+        }
+        .sys-title-group p {
+          color: #64748b;
+          font-size: 0.85rem;
+          margin: 0;
+          font-weight: 500;
+        }
+        .sys-controls {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+        .sys-select {
+          padding: 6px 12px;
+          border-radius: 10px;
+          border: 1px solid #cbd5e1;
+          background: white;
+          font-size: 0.8rem;
+          font-weight: 600;
+          color: #475569;
+          cursor: pointer;
+          outline: none;
+        }
+        .sys-live-indicator {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          background: #f0fdf4;
+          border: 1.5px solid #dcfce7;
+          padding: 6px 12px;
+          border-radius: 10px;
+          font-size: 0.78rem;
+          font-weight: 700;
+          color: #16a34a;
+        }
+        .sys-live-dot {
+          width: 7px;
+          height: 7px;
+          background: #16a34a;
+          border-radius: 50%;
+          animation: sys-pulse 1.8s infinite;
+        }
+        @keyframes sys-pulse {
+          0% { transform: scale(0.9); opacity: 0.6; }
+          50% { transform: scale(1.3); opacity: 1; box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.4); }
+          100% { transform: scale(0.9); opacity: 0.6; }
+        }
+        .sys-cards-grid {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 16px;
+        }
+        .sys-card {
+          background: #ffffff;
+          border: 1px solid #e2e8f0;
+          border-radius: 16px;
+          padding: 16px;
+          box-shadow: 0 2px 8px rgba(15, 23, 42, 0.02);
+          display: flex;
+          flex-direction: column;
+          justify-content: space-between;
+          transition: all 0.2s ease;
+          position: relative;
+        }
+        .sys-card:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 8px 16px rgba(15, 23, 42, 0.05);
+          border-color: #cbd5e1;
+        }
+        .sys-card-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          margin-bottom: 8px;
+        }
+        .sys-card-title {
+          font-size: 0.78rem;
+          font-weight: 700;
+          color: #64748b;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+        }
+        .sys-icon-circle {
+          width: 36px;
+          height: 36px;
+          border-radius: 10px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .sys-giant-value {
+          font-size: 1.9rem;
+          font-weight: 800;
+          color: #0f172a;
+          line-height: 1.1;
+          margin-bottom: 4px;
+        }
+        .sys-card-subtext {
+          font-size: 0.78rem;
+          color: #64748b;
+          font-weight: 500;
+        }
+        .sys-card-link {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin-top: 12px;
+          padding-top: 8px;
+          border-top: 1px solid #f1f5f9;
+          font-size: 0.75rem;
+          font-weight: 700;
+          text-decoration: none;
+          cursor: pointer;
+        }
+        .sys-badge {
+          padding: 2px 8px;
+          border-radius: 6px;
+          font-size: 0.68rem;
+          font-weight: 800;
+        }
+        .sys-badge-green { background: #dcfce7; color: #15803d; }
+        .sys-badge-yellow { background: #fef3c7; color: #b45309; }
+        .sys-badge-red { background: #fee2e2; color: #b91c1c; }
+        .sys-middle-grid {
+          display: grid;
+          grid-template-columns: 1fr 1.15fr;
+          gap: 16px;
+        }
+        .sys-panel {
+          background: #ffffff;
+          border: 1px solid #e2e8f0;
+          border-radius: 16px;
+          padding: 20px;
+          box-shadow: 0 2px 8px rgba(15, 23, 42, 0.02);
+        }
+        .sys-panel-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 16px;
+        }
+        .sys-panel-title {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-size: 1.05rem;
+          font-weight: 800;
+          color: #0f172a;
+          margin: 0;
+        }
+        .sys-panel-badge {
+          background: #fee2e2;
+          color: #b91c1c;
+          font-size: 0.72rem;
+          font-weight: 800;
+          padding: 2px 8px;
+          border-radius: 10px;
+        }
+        .sys-problems-list {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+        .sys-problem-item {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 10px 12px;
+          background: #f8fafc;
+          border: 1px solid #f1f5f9;
+          border-radius: 12px;
+        }
+        .sys-problem-left {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+        .sys-problem-info h4 {
+          font-size: 0.8rem;
+          font-weight: 700;
+          color: #1e293b;
+          margin: 0 0 1px 0;
+        }
+        .sys-problem-info span {
+          font-size: 0.72rem;
+          color: #64748b;
+          font-weight: 500;
+        }
+        .sys-problem-right {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .sys-btn-sm {
+          padding: 6px 12px;
+          border-radius: 8px;
+          border: 1px solid #e2e8f0;
+          background: white;
+          font-size: 0.75rem;
+          font-weight: 700;
+          color: #475569;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        .sys-btn-sm:hover {
+          background: #f8fafc;
+          color: #0f172a;
+          border-color: #cbd5e1;
+        }
+        .sys-metrics-subgrid {
+          display: grid;
+          grid-template-columns: repeat(2, 1fr);
+          gap: 12px;
+        }
+        .sys-metric-box {
+          background: #f8fafc;
+          border: 1px solid #f1f5f9;
+          border-radius: 12px;
+          padding: 12px;
+          display: flex;
+          flex-direction: column;
+          justify-content: space-between;
+        }
+        .sys-metric-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+        }
+        .sys-metric-title {
+          font-size: 0.75rem;
+          font-weight: 700;
+          color: #64748b;
+        }
+        .sys-metric-value {
+          font-size: 1.35rem;
+          font-weight: 800;
+          color: #0f172a;
+        }
+        .sys-sparkline-container {
+          height: 38px;
+          margin-top: 6px;
+        }
+        .sys-table {
+          width: 100%;
+          border-collapse: collapse;
+        }
+        .sys-table th {
+          text-align: left;
+          padding: 10px 12px;
+          font-size: 0.72rem;
+          font-weight: 700;
+          color: #64748b;
+          text-transform: uppercase;
+          border-bottom: 1.5px solid #f1f5f9;
+        }
+        .sys-table td {
+          padding: 11px 12px;
+          font-size: 0.8rem;
+          color: #334155;
+          border-bottom: 1px solid #f1f5f9;
+          font-weight: 500;
+        }
+        .sys-table tr:last-child td {
+          border-bottom: none;
+        }
+        .sys-table tr:hover td {
+          background: #f8fafc;
+        }
+        .sys-log-filters {
+          display: flex;
+          gap: 4px;
+        }
+        .sys-log-btn {
+          padding: 4px 10px;
+          border-radius: 12px;
+          border: none;
+          font-size: 0.7rem;
+          font-weight: 700;
+          color: #64748b;
+          background: #f1f5f9;
+          cursor: pointer;
+        }
+        .sys-log-btn.active {
+          background: #10b981;
+          color: white;
+        }
+        .sys-log-list {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          max-height: 220px;
+          overflow-y: auto;
+        }
+        .sys-log-item {
+          display: flex;
+          align-items: flex-start;
+          gap: 10px;
+          padding: 10px;
+          background: #f8fafc;
+          border-radius: 10px;
+          border: 1px solid #f1f5f9;
+        }
+        .sys-log-badge {
+          padding: 2px 6px;
+          border-radius: 4px;
+          font-size: 0.62rem;
+          font-weight: 800;
+        }
+        .sys-footer-row {
+          display: grid;
+          grid-template-columns: repeat(5, 1fr);
+          gap: 12px;
+          background: #f8fafc;
+          border: 1px solid #e2e8f0;
+          border-radius: 16px;
+          padding: 12px 16px;
+        }
+        .sys-footer-item {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+        .sys-footer-title {
+          font-size: 0.68rem;
+          font-weight: 700;
+          color: #64748b;
+          text-transform: uppercase;
+          display: flex;
+          align-items: center;
+          gap: 4px;
+        }
+        .sys-footer-value {
+          font-size: 0.78rem;
+          font-weight: 600;
+          color: #1e293b;
+        }
+        .sys-progress-track {
+          width: 100%;
+          height: 5px;
+          background: #e2e8f0;
+          border-radius: 3px;
+          overflow: hidden;
+          margin-top: 3px;
+        }
+        
+        /* Premium Custom Modal and Overlay Styles */
+        .sys-modal-overlay {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: rgba(15, 23, 42, 0.6);
+          backdrop-filter: blur(4px);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 10000;
+          animation: sys-fade-in 0.2s ease-out;
+        }
+        @keyframes sys-fade-in {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        .sys-modal-card {
+          background: white;
+          border-radius: 20px;
+          box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+          width: 90%;
+          max-width: 520px;
+          padding: 24px;
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+          animation: sys-slide-up 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        @keyframes sys-slide-up {
+          from { transform: translateY(20px); opacity: 0; }
+          to { transform: translateY(0); opacity: 1; }
+        }
+        .sys-modal-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        .sys-modal-title {
+          font-size: 1.15rem;
+          font-weight: 800;
+          color: #0f172a;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin: 0;
+        }
+        .sys-modal-close {
+          background: none;
+          border: none;
+          font-size: 1.1rem;
+          color: #94a3b8;
+          cursor: pointer;
+          transition: color 0.15s;
+        }
+        .sys-modal-close:hover {
+          color: #0f172a;
+        }
+        .sys-modal-desc {
+          font-size: 0.88rem;
+          color: #475569;
+          line-height: 1.5;
+          margin: 0 0 4px 0;
+          font-weight: 500;
+        }
+        .sys-modal-logs-box {
+          background: #0f172a;
+          border-radius: 12px;
+          padding: 14px;
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          border: 1px solid #1e293b;
+        }
+        .sys-modal-logs-header {
+          font-size: 0.72rem;
+          font-weight: 800;
+          color: #64748b;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          margin-bottom: 4px;
+        }
+        .sys-modal-logs-content {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          max-height: 120px;
+          overflow-y: auto;
+        }
+        .sys-modal-logs-content code {
+          font-family: 'Fira Code', 'Courier New', monospace;
+          font-size: 0.75rem;
+          color: #e2e8f0;
+          white-space: pre-wrap;
+          word-break: break-all;
+          text-align: left;
+        }
+        .sys-modal-footer {
+          display: flex;
+          justify-content: flex-end;
+          gap: 10px;
+          margin-top: 8px;
+        }
+        .sys-btn-primary {
+          background: #10b981;
+          color: white;
+          border: none;
+          padding: 10px 18px;
+          border-radius: 10px;
+          font-size: 0.8rem;
+          font-weight: 700;
+          cursor: pointer;
+          transition: background 0.15s;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .sys-btn-primary:hover {
+          background: #059669;
+        }
+        .sys-btn-primary:disabled {
+          background: #a7f3d0;
+          color: #047857;
+          cursor: not-allowed;
+        }
+        .sys-btn-secondary {
+          background: #f1f5f9;
+          color: #475569;
+          border: none;
+          padding: 10px 18px;
+          border-radius: 10px;
+          font-size: 0.8rem;
+          font-weight: 700;
+          cursor: pointer;
+          transition: background 0.15s;
+        }
+        .sys-btn-secondary:hover {
+          background: #e2e8f0;
+        }
+        .sys-btn-secondary:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+        .sys-spinner {
+          width: 48px;
+          height: 48px;
+          border: 4px solid #f1f5f9;
+          border-top: 4px solid #10b981;
+          border-radius: 50%;
+          animation: sys-spin 1s linear infinite;
+        }
+        .sys-spinner-tiny {
+          width: 14px;
+          height: 14px;
+          border: 2px solid rgba(255, 255, 255, 0.3);
+          border-top: 2px solid white;
+          border-radius: 50%;
+          animation: sys-spin 0.8s linear infinite;
+        }
+        @keyframes sys-spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+        
+        /* Custom Toast Styles */
+        .sys-toast {
+          position: fixed;
+          bottom: 24px;
+          right: 24px;
+          background: #0f172a;
+          color: white;
+          padding: 12px 20px;
+          border-radius: 12px;
+          box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          font-size: 0.82rem;
+          font-weight: 600;
+          z-index: 11000;
+          animation: sys-toast-slide 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+          border-left: 4px solid #10b981;
+        }
+        @keyframes sys-toast-slide {
+          from { transform: translateY(100%) scale(0.9); opacity: 0; }
+          to { transform: translateY(0) scale(1); opacity: 1; }
+        }
+      `}</style>
+
+      {/* Header section with page controls */}
+      <div className="sys-header">
+        <div className="sys-title-group">
+          <h1>Supervisión del Sistema</h1>
+          <p>Centro de monitoreo y estado en tiempo real</p>
+        </div>
+        
+        <div className="sys-controls">
+          <select 
+            className="sys-select" 
+            value={periodFilter} 
+            onChange={(e) => setPeriodFilter(e.target.value)}
+          >
+            <option>Últimas 24 horas</option>
+            <option>Última hora</option>
+            <option>Últimos 7 días</option>
+          </select>
+          
+          <div className="sys-live-indicator">
+            <span className="sys-live-dot"></span>
+            Actualización automática: En vivo
+          </div>
+          
+          <button className="sys-btn-sm" onClick={onBack}>Volver</button>
+        </div>
+      </div>
+
+      {/* Top 4 Premium Metric Cards */}
+      <div className="sys-cards-grid">
+        {/* 1. Estado del Sistema */}
+        <div className="sys-card">
+          <div className="sys-card-header">
+            <div>
+              <span className="sys-card-title">Estado del Sistema</span>
+              <div className="sys-giant-value" style={{ marginTop: '4px' }}>{systemHealth}%</div>
+              <span className="sys-card-subtext">Salud del Sistema</span>
+            </div>
+            <CircularProgress percent={systemHealth} />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span className="sys-badge sys-badge-green">Excelente</span>
+            <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: 500 }}>Última caída: hace 12 días</span>
+          </div>
+          <div style={{ height: '14px', marginTop: '8px' }}>
+            <Sparkline data={[92, 92, 91, 93, 92, 92, 94, 93, 92, 92, 95, 93, 92, 92, 92]} color="#10b981" />
+          </div>
+        </div>
+
+        {/* 2. Errores Críticos */}
+        <div className="sys-card" style={{ borderLeft: '3px solid #ef4444' }}>
+          <div className="sys-card-header" style={{ marginBottom: 0 }}>
+            <div>
+              <span className="sys-card-title">Errores Críticos</span>
+              <div className="sys-giant-value" style={{ color: '#ef4444', marginTop: '4px' }}>{errorCount}</div>
+              <span className="sys-card-subtext">
+                {errorCount > 0 ? '1 requiere atención inmediata' : 'Sin errores críticos'}
+              </span>
+            </div>
+            <div className="sys-icon-circle" style={{ background: '#fee2e2' }}>
+              <AlertCircle size={20} color="#ef4444" />
+            </div>
+          </div>
+        </div>
+
+        {/* 3. Alertas Activas */}
+        <div className="sys-card" style={{ borderLeft: '3px solid #f59e0b' }}>
+          <div className="sys-card-header" style={{ marginBottom: 0 }}>
+            <div>
+              <span className="sys-card-title">Alertas Activas</span>
+              <div className="sys-giant-value" style={{ color: '#f59e0b', marginTop: '4px' }}>{warnCount}</div>
+              <span className="sys-card-subtext">
+                {warnCount > 0 ? 'Requieren monitoreo' : 'Todo en orden'}
+              </span>
+            </div>
+            <div className="sys-icon-circle" style={{ background: '#fffbeb' }}>
+              <AlertTriangle size={20} color="#f59e0b" />
+            </div>
+          </div>
+        </div>
+
+        {/* 4. Servicios Operativos */}
+        <div className="sys-card" style={{ borderLeft: '3px solid #10b981' }}>
+          <div className="sys-card-header" style={{ marginBottom: 0 }}>
+            <div>
+              <span className="sys-card-title">Servicios Operativos</span>
+              <div className="sys-giant-value" style={{ color: '#10b981', marginTop: '4px' }}>5 / 6</div>
+              <span className="sys-card-subtext">83.3% en funcionamiento</span>
+            </div>
+            <div className="sys-icon-circle" style={{ background: '#dcfce7' }}>
+              <CheckCircle2 size={20} color="#10b981" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Middle Grid - Active Problems (Left) & Fluctuating Metrics (Right) */}
+      <div className="sys-middle-grid">
+        {/* Active Problems panel */}
+        <div className="sys-panel" id="sys-problems-panel">
+          <div className="sys-panel-header">
+            <h3 className="sys-panel-title">
+              <AlertCircle size={20} color="#ef4444" />
+              Problemas Activos
+            </h3>
+            <span className="sys-panel-badge">{activeProblems.length}</span>
+          </div>
+
+          <div className="sys-problems-list">
+            {activeProblems.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '30px 10px', color: '#64748b', fontSize: '0.85rem' }}>
+                ✓ No se detectaron problemas activos en el sistema.
               </div>
-              <div>
-                <p style={{ color: stat.color, fontSize: '0.7rem', fontWeight: 700, margin: 0, textTransform: 'uppercase' }}>{stat.label}</p>
-                <span style={{ fontSize: '1.2rem', fontWeight: 800, color: '#0f172a' }}>{stat.val}</span>
+            ) : (
+              activeProblems.map(p => (
+                <div className="sys-problem-item" key={p.id}>
+                  <div className="sys-problem-left">
+                    <div style={{ display: 'flex', background: p.type === 'Crítico' ? '#fee2e2' : '#fffbeb', padding: '6px', borderRadius: '8px' }}>
+                      {p.type === 'Crítico' ? <AlertCircle size={16} color="#ef4444" /> : <AlertTriangle size={16} color="#f59e0b" />}
+                    </div>
+                    <div className="sys-problem-info">
+                      <h4>{p.name}</h4>
+                      <span>{p.time}</span>
+                    </div>
+                  </div>
+                  <div className="sys-problem-right">
+                    <span className={`sys-badge ${p.type === 'Crítico' ? 'sys-badge-red' : 'sys-badge-yellow'}`}>{p.type}</span>
+                    <button 
+                      className="sys-btn-sm" 
+                      onClick={() => p.action === 'Optimizar' ? handleOptimizeMemory() : handleShowProblemDetails(p)}
+                    >
+                      {p.action}
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+          
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '16px', fontSize: '0.75rem', fontWeight: 700, color: '#64748b' }}>
+            <span style={{ cursor: 'pointer' }} onClick={() => scrollToSection('sys-problems-panel')}>Ver todos los problemas</span>
+            <ArrowRight size={14} />
+          </div>
+        </div>
+
+        {/* Fluctuating System Metrics panel */}
+        <div className="sys-panel">
+          <div className="sys-panel-header" style={{ marginBottom: '12px' }}>
+            <h3 className="sys-panel-title">
+              <TrendingUp size={20} color="#3b82f6" />
+              Rendimiento de Recursos
+            </h3>
+            <span style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: 600 }}>Promedio últimas 24h</span>
+          </div>
+
+          <div className="sys-metrics-subgrid">
+            {/* CPU box */}
+            <div className="sys-metric-box">
+              <div className="sys-metric-header">
+                <span className="sys-metric-title">Uso de CPU</span>
+                <span className="sys-metric-value">{cpuHistory[cpuHistory.length - 1]}%</span>
+              </div>
+              <div className="sys-sparkline-container">
+                <Sparkline data={cpuHistory} color="#10b981" />
               </div>
             </div>
-          ))}
-        </div>
-      </ViewHeader>
 
-      {/* Estadísticas de BD */}
-      <div>
-        <h3 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '16px', color: '#1e293b' }}>📊 Estado de la Base de Datos</h3>
-        {loadingStats ? (
-          <div style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>Cargando estadísticas...</div>
-        ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
-            {statCards.map((card, i) => {
-              const Icon = card.icon;
-              return (
-                <div key={i} className="module-card" style={{ display: 'flex', alignItems: 'center', gap: '16px', padding: '20px' }}>
-                  <div style={{ width: '48px', height: '48px', background: card.bg, borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <Icon size={22} color={card.color} />
-                  </div>
-                  <div>
-                    <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#1e293b' }}>{card.value}</div>
-                    <div style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: 500 }}>{card.label}</div>
-                  </div>
-                </div>
-              );
-            })}
+            {/* Memory box */}
+            <div className="sys-metric-box">
+              <div className="sys-metric-header">
+                <span className="sys-metric-title">Uso de Memoria</span>
+                <span className="sys-metric-value">{memHistory[memHistory.length - 1]}%</span>
+              </div>
+              <div className="sys-sparkline-container">
+                <Sparkline data={memHistory} color="#f59e0b" />
+              </div>
+            </div>
+
+            {/* Request Rate box */}
+            <div className="sys-metric-box">
+              <div className="sys-metric-header">
+                <span className="sys-metric-title">Peticiones por minuto</span>
+                <span className="sys-metric-value">{reqHistory[reqHistory.length - 1].toLocaleString()}</span>
+              </div>
+              <div className="sys-sparkline-container">
+                <Sparkline data={reqHistory} color="#3b82f6" isBar={true} />
+              </div>
+            </div>
+
+            {/* Errors rate box */}
+            <div className="sys-metric-box">
+              <div className="sys-metric-header">
+                <span className="sys-metric-title">Errores por hora</span>
+                <span className="sys-metric-value" style={{ color: '#ef4444' }}>{errHistory[errHistory.length - 1]}</span>
+              </div>
+              <div className="sys-sparkline-container">
+                <Sparkline data={errHistory} color="#ef4444" isBar={true} />
+              </div>
+            </div>
           </div>
-        )}
+        </div>
       </div>
 
-      {/* Visor de Logs */}
-      <div className="module-card" style={{ padding: 0, overflow: 'hidden' }}>
-        <div style={{ padding: '20px 24px', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <FileText size={20} color="#2d5a3f" />
-            <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>Logs de Auditoría</h3>
+      {/* Bottom Grid - Service Table (Left) & Activity Logs (Right) */}
+      <div className="sys-middle-grid">
+        {/* Service Table Panel */}
+        <div className="sys-panel" id="sys-services-panel" style={{ padding: '20px 0' }}>
+          <div className="sys-panel-header" style={{ padding: '0 20px', marginBottom: '12px' }}>
+            <h3 className="sys-panel-title">
+              <Settings size={20} color="#2d5a3f" />
+              Estado de Servicios
+            </h3>
           </div>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            {logTypes.map(t => (
-              <button
-                key={t}
-                onClick={() => setLogFilter(t)}
-                style={{
-                  padding: '6px 14px', borderRadius: '20px', border: 'none', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 700,
-                  background: logFilter === t ? '#1a2e23' : '#f1f5f9',
-                  color: logFilter === t ? 'white' : '#64748b',
-                  transition: 'all 0.2s'
+
+          <table className="sys-table">
+            <thead>
+              <tr>
+                <th>Servicio</th>
+                <th>Estado</th>
+                <th>Latencia</th>
+                <th>Último chequeo</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>API de Ventas</td>
+                <td><span className="sys-badge sys-badge-green">Operativo</span></td>
+                <td>120ms</td>
+                <td>Hace 30 seg</td>
+              </tr>
+              <tr>
+                <td>Base de Datos</td>
+                <td><span className="sys-badge sys-badge-green">Operativo</span></td>
+                <td style={{ color: dbLatency > 150 ? '#f59e0b' : '#334155' }}>
+                  {dbLatency}ms
+                </td>
+                <td>Hace 15 seg</td>
+              </tr>
+              <tr>
+                <td>API de Inventario</td>
+                <td><span className="sys-badge sys-badge-green">Operativo</span></td>
+                <td>98ms</td>
+                <td>Hace 20 seg</td>
+              </tr>
+              <tr>
+                <td>Servicio SAT</td>
+                <td><span className="sys-badge sys-badge-yellow">Advertencia</span></td>
+                <td>890ms</td>
+                <td>Hace 45 seg</td>
+              </tr>
+              <tr>
+                <td>Servicio de Correos</td>
+                <td>
+                  <span 
+                    className="sys-badge sys-badge-red" 
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => alert('Intentando reconectar el Servicio de Correos... Error SMTP Host inalcanzable. Se reintentará en 2 min.')}
+                  >
+                    Caído
+                  </span>
+                </td>
+                <td>-</td>
+                <td>Hace 2 min</td>
+              </tr>
+              <tr>
+                <td>Servidor de Archivos</td>
+                <td><span className="sys-badge sys-badge-green">Operativo</span></td>
+                <td>110ms</td>
+                <td>Hace 30 seg</td>
+              </tr>
+            </tbody>
+          </table>
+          
+          <div 
+            style={{ display: 'flex', justifyContent: 'space-between', padding: '16px 20px 0 20px', borderTop: '1px solid #f1f5f9', fontSize: '0.75rem', fontWeight: 700, color: '#3b82f6', cursor: 'pointer', transition: 'all 0.2s' }}
+            className="sys-panel-footer-link"
+            onClick={() => setShowAllServicesModal(true)}
+          >
+            <span>Ver todos los servicios</span>
+            <ArrowRight size={14} />
+          </div>
+        </div>
+
+        {/* Activity Logs Panel */}
+        <div className="sys-panel" id="sys-logs-panel">
+          <div className="sys-panel-header" style={{ marginBottom: '16px' }}>
+            <h3 className="sys-panel-title">
+              <FileText size={20} color="#475569" />
+              Logs Recientes
+            </h3>
+            
+            <div className="sys-log-filters">
+              {logTypes.map(t => (
+                <button
+                  key={t}
+                  className={`sys-log-btn ${logFilter === t ? 'active' : ''}`}
+                  onClick={() => setLogFilter(t)}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="sys-log-list">
+            {loadingLogs ? (
+              <div style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>Cargando logs...</div>
+            ) : currentLogs.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '40px', color: '#64748b', fontSize: '0.82rem' }}>
+                No hay logs del tipo seleccionado.
+              </div>
+            ) : (
+              currentLogs.map(log => {
+                const isError = log.type === 'ERROR';
+                const isWarning = log.type === 'WARNING';
+                const isInfo = log.type === 'INFO';
+                
+                let badgeClass = 'sys-badge-green';
+                let iconColor = '#10b981';
+                if (isError) {
+                  badgeClass = 'sys-badge-red';
+                  iconColor = '#ef4444';
+                } else if (isWarning) {
+                  badgeClass = 'sys-badge-yellow';
+                  iconColor = '#f59e0b';
+                } else if (log.type === 'DEBUG') {
+                  badgeClass = 'sys-badge-green';
+                  iconColor = '#3b82f6';
+                }
+                
+                return (
+                  <div className="sys-log-item" key={log.id}>
+                    <span className={`sys-log-badge ${badgeClass}`}>{log.type}</span>
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                      <p style={{ margin: 0, fontSize: '0.8rem', fontWeight: 600, color: '#1e293b' }}>
+                        {log.message}
+                      </p>
+                      <span style={{ fontSize: '0.68rem', color: '#64748b', fontWeight: 500 }}>
+                        Módulo: {isError ? 'Ventas' : isWarning ? 'Sistema' : isInfo ? 'Base de Datos' : 'Frontend'} • Usuario: {isError ? 'externo' : 'sistema'} • IP: 190.35.23.11
+                      </span>
+                    </div>
+                    <span style={{ fontSize: '0.7rem', color: '#94a3b8', fontFamily: 'monospace', fontWeight: 600 }}>
+                      {formatTime(log.timestamp)}
+                    </span>
+                  </div>
+                );
+              })
+            )}
+          </div>
+          
+          <div 
+            style={{ display: 'flex', justifyContent: 'space-between', marginTop: '16px', fontSize: '0.75rem', fontWeight: 700, color: '#3b82f6', cursor: 'pointer', transition: 'all 0.2s' }}
+            className="sys-panel-footer-link"
+            onClick={() => setShowAllLogsModal(true)}
+          >
+            <span>Ver todos los logs</span>
+            <ArrowRight size={14} />
+          </div>
+        </div>
+      </div>
+
+      {/* Footer statistics row */}
+      <div className="sys-footer-row">
+        {/* 1. Información de Sistema */}
+        <div className="sys-footer-item">
+          <span className="sys-footer-title">
+            <Info size={12} color="#64748b" />
+            Información del Sistema
+          </span>
+          <span className="sys-footer-value">Node {stats?.nodeVersion || 'v24.14.0'}</span>
+          <span style={{ fontSize: '0.68rem', color: '#64748b', fontWeight: 500 }}>
+            Plataforma: {stats?.osPlatform || 'Linux/Docker'} ({stats?.osRelease?.slice(0, 12) || 'AGF-SRV-01'})
+          </span>
+        </div>
+
+        {/* 2. Base de Datos */}
+        <div className="sys-footer-item">
+          <span className="sys-footer-title">
+            <Building2 size={12} color="#64748b" />
+            Base de Datos
+          </span>
+          <span className="sys-footer-value" style={{ fontSize: '0.8rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {stats?.dbVersion || 'PostgreSQL 15-alpine'}
+          </span>
+          <span style={{ fontSize: '0.68rem', color: '#64748b', fontWeight: 500 }}>
+            Tamaño: {stats?.dbSizeStr || '16 MB'} | Conexiones: {stats?.dbConnections || 8}
+          </span>
+        </div>
+
+        {/* 3. Almacenamiento */}
+        <div className="sys-footer-item">
+          <span className="sys-footer-title">
+            <Box size={12} color="#64748b" />
+            Uso de Memoria (RAM)
+          </span>
+          <span className="sys-footer-value">
+            {stats?.usedMemGB || '3.2'} GB / {stats?.totalMemGB || '8.0'} GB
+          </span>
+          <div className="sys-progress-track">
+            <div className="sys-progress-bar" style={{ width: `${stats?.memUsagePercent || 40}%`, background: (stats?.memUsagePercent || 40) > 75 ? '#ef4444' : '#10b981' }}></div>
+          </div>
+        </div>
+
+        {/* 4. Respaldo */}
+        <div className="sys-footer-item">
+          <span className="sys-footer-title">
+            <CheckCircle2 size={12} color="#10b981" />
+            Respaldo
+          </span>
+          <span className="sys-footer-value">Último: Hoy 02:00 a.m.</span>
+          <span style={{ fontSize: '0.68rem', color: '#16a34a', fontWeight: 700 }}>✓ Exitoso</span>
+        </div>
+
+        {/* 5. Uptime */}
+        <div className="sys-footer-item">
+          <span className="sys-footer-title">
+            <Clock size={12} color="#64748b" />
+            Uptime del Servidor
+          </span>
+          <span className="sys-footer-value" style={{ whiteSpace: 'nowrap' }}>
+            {stats ? formatUptimeFull(stats.uptime) : '15 días, 7 horas, 42 min'}
+          </span>
+          <div className="sys-progress-track">
+            <div className="sys-progress-bar" style={{ width: '99.98%', background: '#10b981' }}></div>
+          </div>
+        </div>
+      </div>
+
+      {/* Premium Interactive Modal for Active Problems Details */}
+      {selectedProblem && (
+        <div className="sys-modal-overlay">
+          <div className="sys-modal-card">
+            <div className="sys-modal-header">
+              <h3 className="sys-modal-title">
+                <AlertCircle size={22} color={selectedProblem.type === 'Crítico' ? '#ef4444' : '#f59e0b'} />
+                {selectedProblem.name}
+              </h3>
+              <button className="sys-modal-close" onClick={() => setSelectedProblem(null)}>✕</button>
+            </div>
+            
+            <div className="sys-modal-body" style={{ textAlign: 'left' }}>
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
+                <span className={`sys-badge ${selectedProblem.type === 'Crítico' ? 'sys-badge-red' : 'sys-badge-yellow'}`}>
+                  {selectedProblem.type}
+                </span>
+                <span style={{ fontSize: '0.78rem', color: '#64748b', fontWeight: 600 }}>{selectedProblem.time}</span>
+              </div>
+              
+              <p className="sys-modal-desc">{selectedProblem.desc}</p>
+              
+              <div className="sys-modal-logs-box">
+                <div className="sys-modal-logs-header">Trazado de Diagnóstico (Live Logs)</div>
+                <div className="sys-modal-logs-content">
+                  {selectedProblem.id === 1 ? (
+                    <>
+                      <code>[11:22:15] INFO: Iniciando petición POST a /api/ventas/sync...</code>
+                      <code>[11:22:18] WARNING: TCP connection reset by peer. Reintentando...</code>
+                      <code>[11:22:21] ERROR: ConnectTimeoutException: Connection timed out after 3000ms.</code>
+                      <code>[11:22:21] FATAL: El servicio de Ventas arrojó socket inalcanzable.</code>
+                    </>
+                  ) : (
+                    <>
+                      <code>[11:24:02] INFO: Iniciando cotejo de stock físico vs virtual...</code>
+                      <code>[11:24:05] WARNING: Desfase de inventario detectado en 12 SKUs.</code>
+                      <code>[11:24:06] ERROR: DB Sync Error: Bloqueo de concurrencia en tabla 'inventario'.</code>
+                      <code>[11:24:06] INFO: Buffer de cola esperando reintento.</code>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+            
+            <div className="sys-modal-footer">
+              <button className="sys-btn-secondary" onClick={() => setSelectedProblem(null)} disabled={isSolving}>
+                Cancelar
+              </button>
+              <button className="sys-btn-primary" onClick={() => handleSolveProblem(selectedProblem.id)} disabled={isSolving}>
+                {isSolving ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span className="sys-spinner-tiny"></span>
+                    {solveStep}
+                  </div>
+                ) : (
+                  'Solucionar problema'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Memory Optimization Overlay Progress Dialog */}
+      {isOptimizing && (
+        <div className="sys-modal-overlay">
+          <div className="sys-modal-card" style={{ maxWidth: '420px', textAlign: 'center', padding: '30px' }}>
+            <div className="sys-spinner" style={{ margin: '0 auto 20px auto' }}></div>
+            <h3 style={{ fontSize: '1.1rem', fontWeight: 800, margin: '0 0 8px 0', color: '#0f172a' }}>Optimizando Sistema</h3>
+            <p style={{ fontSize: '0.85rem', color: '#475569', fontWeight: 600, margin: 0 }}>
+              {optimizeStep}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Premium Notification Toast */}
+      {toast && (
+        <div className="sys-toast">
+          <CheckCircle2 size={18} color="#10b981" />
+          <span>{toast.message}</span>
+        </div>
+      )}
+
+      {/* 1. Modal de Todos los Servicios (Expanded Detailed View) */}
+      {showAllServicesModal && (
+        <div className="sys-modal-overlay">
+          <div className="sys-modal-card" style={{ maxWidth: '800px', width: '95%' }}>
+            <div className="sys-modal-header">
+              <h3 className="sys-modal-title">
+                <Settings size={22} color="#3b82f6" />
+                Catálogo Detallado de Servicios Operativos
+              </h3>
+              <button className="sys-modal-close" onClick={() => setShowAllServicesModal(false)}>✕</button>
+            </div>
+            
+            <div className="sys-modal-body" style={{ maxHeight: '60vh', overflowY: 'auto' }}>
+              <p className="sys-modal-desc">
+                Listado expandido de microservicios internos y conexiones de API de la plataforma en tiempo real.
+              </p>
+              
+              <table className="sys-table" style={{ marginTop: '10px' }}>
+                <thead>
+                  <tr>
+                    <th>Servicio</th>
+                    <th>Estado</th>
+                    <th>Latencia</th>
+                    <th>Uptime Histórico</th>
+                    <th>Último Chequeo</th>
+                    <th style={{ textAlign: 'center' }}>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {allServices.map(s => {
+                    let badgeClass = 'sys-badge-green';
+                    if (s.status === 'Advertencia') badgeClass = 'sys-badge-yellow';
+                    if (s.status === 'Caído') badgeClass = 'sys-badge-red';
+                    
+                    return (
+                      <tr key={s.id}>
+                        <td style={{ fontWeight: 700, color: '#1e293b' }}>{s.name}</td>
+                        <td><span className={`sys-badge ${badgeClass}`}>{s.status}</span></td>
+                        <td>{s.status === 'Caído' ? '-' : `${s.latency}ms`}</td>
+                        <td style={{ fontWeight: 600, color: s.uptime > 99.5 ? '#16a34a' : '#f59e0b' }}>
+                          {s.uptime}%
+                        </td>
+                        <td>{s.checkTime}</td>
+                        <td style={{ textAlign: 'center' }}>
+                          <button
+                            className="sys-btn-sm"
+                            style={{ 
+                              background: restartingServiceId === s.id ? '#f1f5f9' : '#3b82f6', 
+                              color: restartingServiceId === s.id ? '#94a3b8' : 'white',
+                              border: 'none',
+                              borderRadius: '6px',
+                              padding: '4px 10px',
+                              fontWeight: 700,
+                              cursor: restartingServiceId === s.id ? 'not-allowed' : 'pointer'
+                            }}
+                            disabled={restartingServiceId !== null}
+                            onClick={() => handleRestartService(s.id)}
+                          >
+                            {restartingServiceId === s.id ? 'Reiniciando...' : 'Reiniciar'}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            
+            <div className="sys-modal-footer">
+              <button className="sys-btn-secondary" onClick={() => setShowAllServicesModal(false)}>
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 2. Modal de Todos los Logs (Searchable console log window) */}
+      {showAllLogsModal && (
+        <div className="sys-modal-overlay">
+          <div className="sys-modal-card" style={{ maxWidth: '900px', width: '95%' }}>
+            <div className="sys-modal-header">
+              <h3 className="sys-modal-title">
+                <FileText size={22} color="#3b82f6" />
+                Bitácora General de Logs del Sistema
+              </h3>
+              <button className="sys-modal-close" onClick={() => setShowAllLogsModal(false)}>✕</button>
+            </div>
+            
+            <div className="sys-modal-body">
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', justifyContent: 'space-between', marginBottom: '14px' }}>
+                {/* Search Bar Input */}
+                <div style={{ position: 'relative', flex: 1, minWidth: '240px' }}>
+                  <input
+                    type="text"
+                    placeholder="Buscar en la bitácora..."
+                    value={logSearchQuery}
+                    onChange={(e) => setLogSearchQuery(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '8px 12px 8px 32px',
+                      borderRadius: '10px',
+                      border: '1px solid #cbd5e1',
+                      fontSize: '0.8rem',
+                      fontWeight: 500,
+                      outline: 'none'
+                    }}
+                  />
+                  <span style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }}>🔍</span>
+                </div>
+                
+                {/* Log level filter pills */}
+                <div className="sys-log-filters" style={{ margin: 0 }}>
+                  {logTypes.map(t => (
+                    <button
+                      key={t}
+                      className={`sys-log-btn ${logFilter === t ? 'active' : ''}`}
+                      onClick={() => setLogFilter(t)}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              
+              {/* Dark Terminal console */}
+              <div 
+                className="sys-modal-logs-box" 
+                style={{ 
+                  background: '#090d16', 
+                  maxHeight: '45vh', 
+                  padding: '16px', 
+                  border: '1.5px solid #1e293b'
                 }}
               >
-                {t}
+                <div className="sys-modal-logs-header" style={{ color: '#475569', display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Consola de Auditoría (Live Audit Console)</span>
+                  <span>Registros mostrados: {
+                    getFilteredLogs().filter(l => 
+                      l.message.toLowerCase().includes(logSearchQuery.toLowerCase())
+                    ).length
+                  }</span>
+                </div>
+                
+                <div className="sys-modal-logs-content" style={{ maxHeight: '38vh', gap: '8px' }}>
+                  {getFilteredLogs().filter(l => 
+                    l.message.toLowerCase().includes(logSearchQuery.toLowerCase())
+                  ).map(log => {
+                    const isError = log.type === 'ERROR';
+                    const isWarning = log.type === 'WARNING';
+                    const isInfo = log.type === 'INFO';
+                    
+                    let color = '#3b82f6';
+                    if (isError) color = '#ef4444';
+                    else if (isWarning) color = '#f59e0b';
+                    else if (log.type === 'DEBUG') color = '#10b981';
+                    
+                    return (
+                      <code key={log.id} style={{ display: 'flex', gap: '8px', lineHeight: '1.4' }}>
+                        <span style={{ color: '#64748b' }}>[{formatTime(log.timestamp)}]</span>
+                        <span style={{ color, fontWeight: 800 }}>[{log.type}]</span>
+                        <span style={{ color: '#e2e8f0' }}>{log.message}</span>
+                      </code>
+                    );
+                  })}
+                  
+                  {getFilteredLogs().filter(l => 
+                    l.message.toLowerCase().includes(logSearchQuery.toLowerCase())
+                  ).length === 0 && (
+                    <div style={{ color: '#475569', padding: '20px 0', fontSize: '0.8rem', textAlign: 'center' }}>
+                      Sin coincidencias para los criterios seleccionados.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+            
+            <div className="sys-modal-footer">
+              <button 
+                className="sys-btn-primary" 
+                style={{ background: '#3b82f6' }}
+                onClick={handleExportLogs}
+              >
+                📥 Exportar logs (.txt)
               </button>
-            ))}
+              <button className="sys-btn-secondary" onClick={() => setShowAllLogsModal(false)}>
+                Cerrar
+              </button>
+            </div>
           </div>
         </div>
-
-        <div style={{ padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '420px', overflowY: 'auto' }}>
-          {loadingLogs ? (
-            <div style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>Cargando logs...</div>
-          ) : filteredLogs.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '40px', color: '#94a3b8' }}>No hay logs de tipo "{logFilter}"</div>
-          ) : filteredLogs.map(log => {
-            const c = logColors[log.type] || logColors.DEBUG;
-            return (
-              <div key={log.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', padding: '12px 16px', background: c.bg, border: `1.5px solid ${c.border}`, borderRadius: '10px' }}>
-                <span style={{ padding: '2px 8px', background: c.badge, color: c.text, borderRadius: '6px', fontSize: '0.72rem', fontWeight: 800, letterSpacing: '0.5px', flexShrink: 0, marginTop: '2px' }}>
-                  {log.type}
-                </span>
-                <div style={{ flex: 1 }}>
-                  <p style={{ margin: 0, color: '#1e293b', fontSize: '0.9rem', fontWeight: 500 }}>{log.message}</p>
-                </div>
-                <span style={{ fontSize: '0.75rem', color: '#94a3b8', flexShrink: 0, fontFamily: 'monospace' }}>{formatTime(log.timestamp)}</span>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      )}
     </div>
   );
 }
 
 
+// Funciones de ayuda para expandir cadenas de productos concatenadas
+function splitProducts(str) {
+  const parts = [];
+  let current = '';
+  let depth = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str[i];
+    if (char === '(') depth++;
+    if (char === ')') depth--;
+    if (char === ',' && depth === 0) {
+      parts.push(current.trim());
+      current = '';
+      continue;
+    }
+    current += char;
+  }
+  if (current.trim()) parts.push(current.trim());
+  return parts;
+};
 
+function expandOrderItems(items) {
+  const expanded = [];
+  items.forEach((it) => {
+    // Si el producto incluye paréntesis, asumimos que puede ser una cadena agrupada
+    if (it.producto && it.producto.includes('(') && it.producto.includes(')')) {
+      const parts = splitProducts(it.producto);
+      parts.forEach((part, pIdx) => {
+        const matchNew = part.match(/(.+?)\s*\(P:(\d+),\s*E:(\d+),\s*R:(\d+)\)/);
+        if (matchNew) {
+          expanded.push({
+            ...it,
+            id: `${it.id}_sub_${pIdx}`,
+            originalId: it.id,
+            producto: matchNew[1].trim(),
+            pedidoOri: parseInt(matchNew[2]),
+            enviadoOri: parseInt(matchNew[3]),
+            pendiente: parseInt(matchNew[4])
+          });
+          return;
+        }
+        const matchOld = part.match(/(.+?)\s*\((\d+)\)/);
+        if (matchOld) {
+          expanded.push({
+            ...it,
+            id: `${it.id}_sub_${pIdx}`,
+            originalId: it.id,
+            producto: matchOld[1].trim(),
+            pedidoOri: parseInt(matchOld[2]),
+            enviadoOri: 0,
+            pendiente: parseInt(matchOld[2])
+          });
+          return;
+        }
+        // Fallback
+        const pedOriFB = parseFloat(it.cantidad) || parseFloat(it.pendiente) || 0;
+        expanded.push({ ...it, id: `${it.id}_sub_${pIdx}`, originalId: it.id, pedidoOri: pedOriFB, enviadoOri: 0 });
+      });
+    } else {
+      // Item individual normal
+      const pedOri = parseFloat(it.cantidad) || parseFloat(it.pendiente) || 0;
+      expanded.push({
+        ...it,
+        originalId: it.id,
+        pedidoOri: pedOri,
+        enviadoOri: pedOri - (parseFloat(it.pendiente) || 0)
+      });
+    }
+  });
+  return expanded;
+};
 
 // 12. Módulo de Logística (Rediseño Profesional 2026)
 function LogisticaModule({ onBack, backorders, handleDeliver, refreshData, prospects }) {
   const [selectedOrder, setSelectedOrder] = useState(null);
-  const [activeTab, setActiveTab] = useState('dispatch'); // 'dispatch' | 'recent'
+  const [activeTab, setActiveTab] = useState('clients'); // 'clients' | 'prospects'
   const [searchQuery, setSearchQuery] = useState('');
   
   const [alertModal, setAlertModal] = useState({
@@ -9425,10 +10930,12 @@ function LogisticaModule({ onBack, backorders, handleDeliver, refreshData, prosp
     tracking: `AG-${Date.now().toString().slice(-6)}`
   });
   const [deliveredQtys, setDeliveredQtys] = useState({});
+  const [isPartialMode, setIsPartialMode] = useState(false);
+  const [selectedItems, setSelectedItems] = useState({});
 
   // Agrupar pedidos pendientes por Folio (documento)
   const pendingByFolio = (backorders || [])
-    .filter(b => (b.pendiente || 0) > 0 && b.estado !== 'Cotización')
+    .filter(b => (b.pendiente || 0) > 0 && b.estado !== 'Cotización' && b.estado !== 'Facturación')
     .reduce((acc, b) => {
       if (!acc[b.documento]) {
         // Detectar si es cliente nuevo dinámicamente (no está en prospectos)
@@ -9453,12 +10960,19 @@ function LogisticaModule({ onBack, backorders, handleDeliver, refreshData, prosp
   );
 
   const openDispatchModal = (order) => {
-    setSelectedOrder(order);
+    const expandedItems = expandOrderItems(order.items);
+    const orderWithExpanded = { ...order, items: expandedItems, originalItems: order.items };
+    setSelectedOrder(orderWithExpanded);
+    const hasHistory = order.items.some(it => (it.dispatchHistory && it.dispatchHistory.length > 0) || it.estado === 'Parcial');
+    setIsPartialMode(hasHistory);
     const initialQtys = {};
-    order.items.forEach(it => {
+    const initSel = {};
+    expandedItems.forEach(it => {
       initialQtys[it.id] = it.pendiente;
+      initSel[it.id] = true;
     });
     setDeliveredQtys(initialQtys);
+    setSelectedItems(initSel);
 
     // Buscar prospecto para obtener datos de entrega reales
     const prospect = (prospects || []).find(p => p.name === order.cliente);
@@ -9535,23 +11049,72 @@ function LogisticaModule({ onBack, backorders, handleDeliver, refreshData, prosp
             });
           }
 
-          const promises = selectedOrder.items.map(it => {
-            const delQty = parseInt(deliveredQtys[it.id]) || 0;
-            const newPendiente = Math.max(0, it.pendiente - delQty);
-            const isFullyDelivered = newPendiente === 0;
+          const prospect = (prospects || []).find(p => p.name === selectedOrder.cliente);
+          const isClientOrder = prospect ? prospect.isClient : true;
 
-            return fetch(`/api/backorders/${it.id}`, {
+          const groups = {};
+          selectedOrder.items.forEach(pi => {
+            if (!groups[pi.originalId]) groups[pi.originalId] = [];
+            groups[pi.originalId].push(pi);
+          });
+
+          const promises = Object.keys(groups).map(origId => {
+            const subItems = groups[origId];
+            const origItem = selectedOrder.originalItems.find(it => it.id == origId) || subItems[0];
+            
+            const newStringParts = subItems.map(pi => {
+              let del = pi.pendiente;
+              if (isClientOrder && isPartialMode) {
+                del = selectedItems[pi.id] ? (parseInt(deliveredQtys[pi.id]) || 0) : 0;
+              }
+              const newPend = Math.max(0, pi.pendiente - del);
+              const newEnv = pi.enviadoOri + del;
+              if (newPend > 0 || newEnv > 0) {
+                return `${pi.producto} (P:${pi.pedidoOri}, E:${newEnv}, R:${newPend})`;
+              }
+              return null;
+            }).filter(Boolean).join(', ');
+            
+            const totalRemaining = subItems.reduce((sum, pi) => {
+              let del = pi.pendiente;
+              if (isClientOrder && isPartialMode) {
+                del = selectedItems[pi.id] ? (parseInt(deliveredQtys[pi.id]) || 0) : 0;
+              }
+              return sum + Math.max(0, pi.pendiente - del);
+            }, 0);
+            
+            const currentDispatch = {
+              id: `disp_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+              date: new Date().toISOString(),
+              type: totalRemaining === 0 ? 'Entrega final' : `Parcial #${(origItem.dispatchHistory || []).length + 1}`,
+              status: 'En tránsito',
+              guide: logisticsForm.tracking || 'Sin guía asignada',
+              items: subItems.map(pi => {
+                let del = pi.pendiente;
+                if (isClientOrder && isPartialMode) del = selectedItems[pi.id] ? (parseInt(deliveredQtys[pi.id]) || 0) : 0;
+                return { producto: pi.producto, cantidad: del };
+              }).filter(it => it.cantidad > 0),
+              totalPieces: subItems.reduce((sum, pi) => {
+                let del = pi.pendiente;
+                if (isClientOrder && isPartialMode) del = selectedItems[pi.id] ? (parseInt(deliveredQtys[pi.id]) || 0) : 0;
+                return sum + del;
+              }, 0)
+            };
+            
+            return fetch(`/api/backorders/${origId}`, {
               method: 'PUT',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                pendiente: newPendiente,
-                estado: isFullyDelivered ? 'Completado' : 'Parcial',
-                deliveredQty: (it.deliveredQty || 0) + delQty,
+                ...origItem,
+                producto: newStringParts || 'Orden completada',
+                pendiente: totalRemaining > 0 ? 1 : 0,
+                estado: totalRemaining === 0 ? 'Completado' : 'Parcial',
+                dispatchHistory: [...(origItem.dispatchHistory || []), currentDispatch],
                 driverName: logisticsForm.driverName,
                 unitInfo: logisticsForm.unitInfo,
                 routeInfo: logisticsForm.routeInfo,
                 deliveryNotes: `Entregado en: ${logisticsForm.address}. Obs: ${logisticsForm.deliveryNotes}`,
-                deliveredAt: isFullyDelivered ? new Date().toISOString() : undefined,
+                deliveredAt: totalRemaining === 0 ? new Date().toISOString() : undefined,
                 billingStatus: 'Listo para Facturar'
               })
             });
@@ -9559,17 +11122,18 @@ function LogisticaModule({ onBack, backorders, handleDeliver, refreshData, prosp
 
           await Promise.all(promises);
 
-          // AUTOMATIZACIÓN: Si el pedido se entregó completo, pasar prospecto a Venta Completada
+          // AUTOMATIZACIÓN: Si el pedido se entregó completo, pasar prospecto a Venta Completada, si no a Por Menores
           const allFullyDelivered = selectedOrder.items.every(it => {
             const delQty = parseInt(deliveredQtys[it.id]) || 0;
             return (it.pendiente - delQty) <= 0;
           });
 
-          if (existingProspect && allFullyDelivered) {
+          if (existingProspect) {
+            const targetStage = allFullyDelivered ? 'Venta Completada' : 'Por Menores';
             await fetch(`/api/prospects/${existingProspect.id}`, {
               method: 'PUT',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ stage: 'Venta Completada' })
+              body: JSON.stringify({ stage: targetStage })
             });
           }
 
@@ -9608,10 +11172,10 @@ function LogisticaModule({ onBack, backorders, handleDeliver, refreshData, prosp
       >
         <div style={{ display: 'flex', gap: '16px', marginLeft: 'auto' }}>
           {[
-            { label: 'Órdenes por despachar', val: Object.keys(pendingByFolio).length, sub: 'Total pendientes', icon: ClipboardList, color: '#16a34a', bg: '#f0fdf4', tabKey: 'dispatch' },
+            { label: 'Órdenes por despachar', val: Object.keys(pendingByFolio).length, sub: 'Total pendientes', icon: ClipboardList, color: '#16a34a', bg: '#f0fdf4', tabKey: 'clients' },
             { label: 'Entregas recientes', val: backordersEntregados.length, sub: 'Últimos 7 días', icon: CheckCircle2, color: '#3b82f6', bg: '#eff6ff', tabKey: 'recent' }
           ].map((stat, i) => {
-            const isActive = activeTab === stat.tabKey;
+            const isActive = activeTab === stat.tabKey || (stat.tabKey === 'clients' && activeTab === 'prospects');
             return (
               <div 
                 key={i} 
@@ -9664,26 +11228,34 @@ function LogisticaModule({ onBack, backorders, handleDeliver, refreshData, prosp
           {/* CABECERA INTERNA: TABS Y BUSCADOR */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', borderBottom: '1px solid #f1f5f9', paddingBottom: '12px' }}>
             <div style={{ display: 'flex', gap: '24px' }}>
-              <button
-                onClick={() => setActiveTab('dispatch')}
-                style={{
-                  background: 'none', border: 'none',
-                  borderBottom: activeTab === 'dispatch' ? '2px solid #16a34a' : '2px solid transparent',
-                  color: activeTab === 'dispatch' ? '#0f172a' : '#94a3b8',
-                  fontWeight: 700, fontSize: '0.9rem', cursor: 'pointer', padding: '4px 0'
-                }}>
-                Por Despachar <span style={{ marginLeft: '4px', opacity: 0.6 }}>({Object.keys(pendingByFolio).length})</span>
-              </button>
-              <button
-                onClick={() => setActiveTab('recent')}
-                style={{
-                  background: 'none', border: 'none',
-                  borderBottom: activeTab === 'recent' ? '2px solid #16a34a' : '2px solid transparent',
-                  color: activeTab === 'recent' ? '#0f172a' : '#94a3b8',
-                  fontWeight: 700, fontSize: '0.9rem', cursor: 'pointer', padding: '4px 0'
-                }}>
-                Historial Completo
-              </button>
+              {activeTab === 'recent' ? (
+                <span style={{ fontWeight: 800, color: '#0f172a', fontSize: '0.9rem', padding: '4px 0', borderBottom: '2px solid #3b82f6' }}>
+                  Historial de Entregas
+                </span>
+              ) : (
+                <>
+                  <button
+                    onClick={() => setActiveTab('clients')}
+                    style={{
+                      background: 'none', border: 'none',
+                      borderBottom: activeTab === 'clients' ? '2px solid #16a34a' : '2px solid transparent',
+                      color: activeTab === 'clients' ? '#0f172a' : '#94a3b8',
+                      fontWeight: 700, fontSize: '0.9rem', cursor: 'pointer', padding: '4px 0'
+                    }}>
+                    Clientes
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('prospects')}
+                    style={{
+                      background: 'none', border: 'none',
+                      borderBottom: activeTab === 'prospects' ? '2px solid #16a34a' : '2px solid transparent',
+                      color: activeTab === 'prospects' ? '#0f172a' : '#94a3b8',
+                      fontWeight: 700, fontSize: '0.9rem', cursor: 'pointer', padding: '4px 0'
+                    }}>
+                    Prospectos
+                  </button>
+                </>
+              )}
             </div>
             <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
               <div style={{ position: 'relative' }}>
@@ -9700,50 +11272,11 @@ function LogisticaModule({ onBack, backorders, handleDeliver, refreshData, prosp
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: '32px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '32px' }}>
 
-            {/* COLUMNA IZQUIERDA: LISTA DE ÓRDENES */}
+            {/* COLUMNA UNICA: LISTA DE ÓRDENES */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              {activeTab === 'dispatch' ? (
-                filteredDispatch.map((order, i) => {
-                  const totalPzas = order.items.reduce((sum, it) => sum + it.pendiente, 0);
-                  return (
-                    <div key={i} style={{ background: '#fcfcfc', borderRadius: '16px', padding: '20px', border: '1px solid #f1f5f9', transition: 'all 0.2s' }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.5fr 100px', gap: '20px', alignItems: 'center' }}>
-                        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                          <div style={{ background: '#f0fdf4', padding: '8px', borderRadius: '10px' }}><Building2 size={20} color="#16a34a" /></div>
-                          <div style={{ minWidth: 0 }}>
-                            <h4 style={{ fontSize: '0.95rem', fontWeight: 800, color: '#0f172a', margin: 0, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{order.cliente}</h4>
-                            <span style={{ fontSize: '0.8rem', color: '#3b82f6', fontWeight: 700 }}>#{order.documento}</span>
-                          </div>
-                        </div>
-                        <div style={{ borderLeft: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9', padding: '0 20px' }}>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' }}>
-                            {order.items.slice(0, 2).map((it, idx) => (
-                              <span key={idx} style={{ padding: '4px 8px', background: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px', fontSize: '0.7rem', color: '#475569', fontWeight: 700, whiteSpace: 'nowrap' }}>
-                                {it.producto} ({it.pendiente})
-                              </span>
-                            ))}
-                            {order.items.length > 2 && (
-                              <span style={{ fontSize: '0.7rem', color: '#94a3b8', fontWeight: 700, paddingLeft: '4px' }}>
-                                +{order.items.length - 2} más...
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'flex-end' }}>
-
-                          <button
-                            onClick={() => openDispatchModal(order)}
-                            style={{ background: '#0f172a', color: '#fff', border: 'none', borderRadius: '10px', padding: '10px 16px', fontSize: '0.8rem', fontWeight: 800, cursor: 'pointer', width: '120px', transition: 'all 0.2s', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)' }}>
-                            Gestionar
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })
-              ) : (
+              {activeTab === 'recent' ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   {backordersEntregados.map((b, i) => (
                     <div key={i} style={{ padding: '12px 20px', background: '#fff', borderRadius: '12px', border: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -9766,7 +11299,68 @@ function LogisticaModule({ onBack, backorders, handleDeliver, refreshData, prosp
                       </span>
                     </div>
                   ))}
+                  {backordersEntregados.length === 0 && (
+                    <p style={{ textAlign: 'center', color: '#94a3b8', padding: '20px' }}>No hay entregas recientes.</p>
+                  )}
                 </div>
+              ) : (
+                Object.values(pendingByFolio).filter(o => {
+                  const matchesSearch = o.cliente.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                                        o.documento.toLowerCase().includes(searchQuery.toLowerCase());
+                  const prospect = (prospects || []).find(p => p.name === o.cliente);
+                  const isClient = prospect ? prospect.isClient : true;
+                  
+                  if (activeTab === 'clients') return matchesSearch && isClient;
+                  if (activeTab === 'prospects') return matchesSearch && !isClient;
+                  return matchesSearch;
+                }).map((order, i) => {
+                  const totalPzas = order.items.reduce((sum, it) => sum + it.pendiente, 0);
+                  return (
+                    <div key={i} style={{ background: '#fcfcfc', borderRadius: '16px', padding: '20px', border: '1px solid #f1f5f9', transition: 'all 0.2s' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.5fr auto', gap: '20px', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                          <div style={{ background: '#f0fdf4', padding: '8px', borderRadius: '10px' }}><Building2 size={20} color="#16a34a" /></div>
+                          <div style={{ minWidth: 0 }}>
+                            <h4 style={{ fontSize: '0.95rem', fontWeight: 800, color: '#0f172a', margin: 0, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{order.cliente}</h4>
+                            <span style={{ fontSize: '0.8rem', color: '#3b82f6', fontWeight: 700 }}>#{order.documento}</span>
+                          </div>
+                        </div>
+                        <div style={{ borderLeft: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9', padding: '0 20px' }}>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' }}>
+                            {expandOrderItems(order.items).slice(0, 2).map((it, idx) => (
+                              <span key={idx} style={{ padding: '4px 8px', background: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px', fontSize: '0.7rem', color: '#475569', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                                {it.producto} ({it.pendiente})
+                              </span>
+                            ))}
+                            {expandOrderItems(order.items).length > 2 && (
+                              <span style={{ fontSize: '0.7rem', color: '#94a3b8', fontWeight: 700, paddingLeft: '4px' }}>
+                                +{expandOrderItems(order.items).length - 2} más...
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'row', gap: '16px', alignItems: 'center', justifyContent: 'flex-end' }}>
+                          {order.items.some(it => (it.dispatchHistory && it.dispatchHistory.length > 0) || it.estado === 'Parcial') && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: '#f8fafc', padding: '8px 14px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                              <Package size={22} color="#2563eb" strokeWidth={2.5} />
+                              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                <span style={{ color: '#2563eb', fontSize: '0.75rem', fontWeight: 800, lineHeight: '1' }}>ENTREGA PARCIAL</span>
+                                <span style={{ color: '#64748b', fontSize: '0.7rem', fontWeight: 700, marginTop: '4px' }}>
+                                  {Math.max(1, ...order.items.map(it => it.dispatchHistory?.length || 0))}/{expandOrderItems(order.items).length} despachos
+                                </span>
+                              </div>
+                            </div>
+                          )}
+                          <button
+                            onClick={() => openDispatchModal(order)}
+                            style={{ background: '#0f172a', color: '#fff', border: 'none', borderRadius: '10px', padding: '12px 24px', fontSize: '0.85rem', fontWeight: 800, cursor: 'pointer', transition: 'all 0.2s', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)' }}>
+                            Gestionar
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
               )}
 
               {/* PAGINACIÓN COMPACTA */}
@@ -9776,63 +11370,53 @@ function LogisticaModule({ onBack, backorders, handleDeliver, refreshData, prosp
                 <button style={{ width: '28px', height: '28px', borderRadius: '6px', border: '1px solid #e2e8f0', background: '#fff', cursor: 'pointer' }}><ChevronRight size={14} color="#94a3b8" /></button>
               </div>
             </div>
-
-            {/* COLUMNA DERECHA: BARRA LATERAL (DENTRO DEL MISMO BOX) */}
-            <div style={{ borderLeft: '1px solid #f1f5f9', paddingLeft: '32px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              <h3 style={{ fontSize: '1rem', fontWeight: 800, color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <History size={18} color="#3b82f6" /> Entregas Recientes
-              </h3>
-
-              <div style={{ flex: 1 }}>
-                {backordersEntregados.length === 0 ? (
-                  <div style={{ padding: '40px 20px', textAlign: 'center' }}>
-                    <div style={{ width: '100px', height: '120px', background: '#eff6ff', borderRadius: '12px', margin: '0 auto 20px auto', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <ClipboardCheck size={40} color="#bfdbfe" />
-                      <div style={{ position: 'absolute', bottom: '-5px', right: '-5px', width: '30px', height: '30px', background: '#22c55e', borderRadius: '50%', border: '4px solid #fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <Check size={16} color="#fff" />
-                      </div>
-                    </div>
-                    <p style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: 600, lineHeight: '1.5' }}>Aún no hay entregas registradas hoy.</p>
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    {backordersEntregados.slice(0, 5).map((b, i) => (
-                      <div key={i} style={{ padding: '12px', background: '#f8fafc', borderRadius: '12px', border: '1px solid #f1f5f9' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                          <span style={{ fontSize: '0.85rem', fontWeight: 800 }}>{b.cliente}</span>
-                          <Check size={12} color="#16a34a" />
-                        </div>
-                        <p style={{ fontSize: '0.7rem', color: '#94a3b8', margin: 0 }}>{b.producto} • {b.cantidad} pzas</p>
-                      </div>
-                    ))}
-                    <button
-                      onClick={() => setActiveTab('recent')}
-                      style={{ marginTop: '12px', padding: '8px', background: '#fff', border: '1px solid #e2e8f0', borderRadius: '10px', color: '#3b82f6', fontSize: '0.8rem', fontWeight: 700, cursor: 'pointer' }}>
-                      Ver todo el historial
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
           </div>
         </div>
       </div>
 
-      {/* EL MODAL SE MANTIENE IGUAL POR AHORA (YA ES FUNCIONAL) */}
-      {selectedOrder && (
+      {/* EL MODAL DE LOGÍSTICA */}
+      {selectedOrder && (() => {
+        const prospect = (prospects || []).find(p => p.name === selectedOrder.cliente);
+        const isClientOrder = prospect ? prospect.isClient : true;
+
+        const totalSelectedItems = selectedOrder.items.filter(it => selectedItems[it.id]).length;
+        const totalSelectedPieces = selectedOrder.items.reduce((sum, it) => sum + (selectedItems[it.id] ? (parseInt(deliveredQtys[it.id]) || 0) : 0), 0);
+        const totalPendingPieces = selectedOrder.items.reduce((sum, it) => sum + it.pendiente, 0);
+        const allHistories = selectedOrder.originalItems.reduce((acc, it) => [...acc, ...(it.dispatchHistory || [])], []);
+        const dispatchHistory = Array.from(new Map(allHistories.map(item => [item.id, item])).values())
+          .sort((a, b) => new Date(a.date) - new Date(b.date))
+          .map((dh, i) => ({ ...dh, type: dh.type === 'Entrega final' ? dh.type : `Parcial #${i + 1}` }));
+        
+        return (
         <div className="modal-overlay" style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(15, 23, 42, 0.7)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div className="modal-content" style={{ width: '95%', maxWidth: '1000px', background: '#fff', borderRadius: '32px', padding: '48px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.4)', maxHeight: '95vh', overflowY: 'auto', border: '1px solid rgba(255,255,255,0.2)' }}>
+          <div className="modal-content" style={{ width: '95%', maxWidth: isClientOrder ? '1200px' : '1000px', background: '#fff', borderRadius: '32px', padding: '48px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.4)', maxHeight: '95vh', overflowY: 'auto', border: '1px solid rgba(255,255,255,0.2)' }}>
 
             {/* Modal Header */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '40px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
               <div>
-                <h3 style={{ fontSize: '2.2rem', fontWeight: 900, color: '#0f172a', margin: 0, letterSpacing: '-1px' }}>Estado del Despacho</h3>
-                <p style={{ color: '#64748b', fontSize: '1.1rem', marginTop: '8px', fontWeight: 600 }}>
-                  Folio: <span style={{ color: '#3b82f6' }}>#{selectedOrder.documento}</span> • <span style={{ color: '#1e293b' }}>{selectedOrder.cliente}</span>
-                </p>
+                <h3 style={{ fontSize: '2.2rem', fontWeight: 900, color: '#0f172a', margin: '0 0 4px 0', letterSpacing: '-1px' }}>Estado del Despacho</h3>
+                <p style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: '#64748b' }}>Folio: <span style={{ color: '#3b82f6' }}>#{selectedOrder.documento}</span> • {selectedOrder.cliente}</p>
               </div>
-              <button onClick={() => setSelectedOrder(null)} style={{ background: '#f1f5f9', border: 'none', borderRadius: '16px', padding: '12px', cursor: 'pointer', transition: 'all 0.2s' }}><X size={24} color="#64748b" /></button>
+              <button onClick={() => setSelectedOrder(null)} style={{ background: '#f1f5f9', border: 'none', borderRadius: '12px', padding: '12px', cursor: 'pointer', color: '#64748b' }}>
+                <X size={20} />
+              </button>
             </div>
+
+            {isClientOrder && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '32px' }}>
+                <div style={{ display: 'flex', background: '#f1f5f9', borderRadius: '12px', padding: '4px' }}>
+                  <button onClick={() => setIsPartialMode(false)} style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', background: !isPartialMode ? '#fff' : 'transparent', color: !isPartialMode ? '#3b82f6' : '#64748b', fontWeight: 800, fontSize: '0.8rem', cursor: 'pointer', boxShadow: !isPartialMode ? '0 2px 4px rgba(0,0,0,0.05)' : 'none', transition: 'all 0.2s' }}>
+                    ENTREGA COMPLETA
+                  </button>
+                  <button onClick={() => setIsPartialMode(true)} style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', background: isPartialMode ? '#fff' : 'transparent', color: isPartialMode ? '#3b82f6' : '#64748b', fontWeight: 800, fontSize: '0.8rem', cursor: 'pointer', boxShadow: isPartialMode ? '0 2px 4px rgba(0,0,0,0.05)' : 'none', transition: 'all 0.2s' }}>
+                    ENTREGA PARCIAL
+                  </button>
+                </div>
+                <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#475569', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Truck size={14} /> {isPartialMode ? `${totalSelectedPieces} de ${totalPendingPieces} piezas enviadas` : "Se enviarán todos los productos pendientes"}
+                </span>
+              </div>
+            )}
 
             {/* Stepper Flow */}
             <div style={{ position: 'relative', marginBottom: '60px', padding: '0 20px' }}>
@@ -9974,82 +11558,278 @@ function LogisticaModule({ onBack, backorders, handleDeliver, refreshData, prosp
             </div>
 
             {/* Bottom Section: Products & Delivery Info */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '32px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: isClientOrder ? '1.5fr 1fr' : '1fr 1fr', gap: '32px' }}>
 
-              {/* Products Card */}
-              <div style={{ background: '#fff', borderRadius: '24px', padding: '32px', border: '1.5px solid #f1f5f9', boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}>
-                <h4 style={{ margin: '0 0 24px 0', fontSize: '1.1rem', fontWeight: 800, color: '#0f172a' }}>Productos en esta orden ({selectedOrder.items.length})</h4>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                  {selectedOrder.items.map((it, idx) => (
-                    <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '16px', padding: '12px', background: '#f8fafc', borderRadius: '16px' }}>
-                      <div style={{ width: '50px', height: '50px', background: '#fff', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #e2e8f0' }}>
-                        <Package size={24} color="#16a34a" />
+              {/* Products Card & Historial (Left Col) */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                {isClientOrder ? (
+                  <>
+                    <div style={{ background: '#fff', borderRadius: '24px', padding: '32px', border: '1.5px solid #f1f5f9', boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                        <h4 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: '#0f172a' }}>Productos en esta orden</h4>
+                        <span style={{ padding: '6px 12px', background: '#eff6ff', color: '#3b82f6', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 800 }}>{selectedOrder.items.length} pendientes de envío</span>
                       </div>
-                      <div style={{ flex: 1 }}>
-                        <p style={{ margin: 0, fontWeight: 800, color: '#1e293b', fontSize: '0.95rem' }}>{it.producto.toUpperCase()} ({it.pendiente} pzas)</p>
-                        <p style={{ margin: '2px 0 0 0', fontSize: '0.8rem', color: '#64748b', fontWeight: 600 }}>Presentación: 20 KG / Fertilizante</p>
+                      
+                      {/* Tabla Premium */}
+                      <div style={{ overflowX: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                          <thead>
+                            <tr>
+                              <th style={{ padding: '12px 8px', color: '#64748b', fontSize: '0.7rem', fontWeight: 800, textTransform: 'uppercase', borderBottom: '2px solid #f1f5f9' }}>Producto</th>
+                              <th style={{ padding: '12px 8px', color: '#64748b', fontSize: '0.7rem', fontWeight: 800, textTransform: 'uppercase', borderBottom: '2px solid #f1f5f9', textAlign: 'center' }}>Pedido</th>
+                              <th style={{ padding: '12px 8px', color: '#64748b', fontSize: '0.7rem', fontWeight: 800, textTransform: 'uppercase', borderBottom: '2px solid #f1f5f9', textAlign: 'center' }}>Enviado</th>
+                              <th style={{ padding: '12px 8px', color: '#64748b', fontSize: '0.7rem', fontWeight: 800, textTransform: 'uppercase', borderBottom: '2px solid #f1f5f9', textAlign: 'center' }}>Pendiente</th>
+                              <th style={{ padding: '12px 8px', color: '#64748b', fontSize: '0.7rem', fontWeight: 800, textTransform: 'uppercase', borderBottom: '2px solid #f1f5f9', textAlign: 'center' }}>Enviar ahora</th>
+                              <th style={{ padding: '12px 8px', color: '#64748b', fontSize: '0.7rem', fontWeight: 800, textTransform: 'uppercase', borderBottom: '2px solid #f1f5f9', textAlign: 'center', minWidth: '80px' }}>Avance</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {selectedOrder.items.map(it => {
+                              const pedidoOri = it.pedidoOri;
+                              const enviadoOri = it.enviadoOri;
+                              const currentDelQty = parseInt(deliveredQtys[it.id]) || 0;
+                              const isSelected = selectedItems[it.id];
+                              
+                              const advancePrc = Math.round(((enviadoOri + (isClientOrder && isPartialMode ? (isSelected ? currentDelQty : 0) : it.pendiente)) / pedidoOri) * 100);
+
+                              return (
+                                <tr key={it.id} style={{ borderBottom: '1px solid #f1f5f9', opacity: (!isClientOrder || !isPartialMode || isSelected) ? 1 : 0.5 }}>
+                                  <td style={{ padding: '16px 8px' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                      {isClientOrder && isPartialMode && (
+                                        <input 
+                                          type="checkbox" 
+                                          checked={!!isSelected}
+                                          onChange={(e) => setSelectedItems(prev => ({...prev, [it.id]: e.target.checked}))}
+                                          style={{ cursor: 'pointer', transform: 'scale(1.2)' }}
+                                        />
+                                      )}
+                                      <div style={{ background: '#f0fdf4', padding: '6px', borderRadius: '8px' }}>
+                                        <Package size={16} color="#16a34a" />
+                                      </div>
+                                      <span style={{ fontWeight: 800, fontSize: '0.85rem', color: '#0f172a' }}>{it.producto.toUpperCase()}</span>
+                                    </div>
+                                  </td>
+                                  <td style={{ padding: '16px 8px', textAlign: 'center', fontWeight: 700, color: '#64748b', fontSize: '0.85rem' }}>{pedidoOri}</td>
+                                  <td style={{ padding: '16px 8px', textAlign: 'center', fontWeight: 800, color: '#16a34a', fontSize: '0.85rem' }}>{enviadoOri}</td>
+                                  <td style={{ padding: '16px 8px', textAlign: 'center', fontWeight: 800, color: '#f59e0b', fontSize: '0.85rem' }}>{it.pendiente}</td>
+                                  <td style={{ padding: '16px 8px', textAlign: 'center' }}>
+                                    {isClientOrder && isPartialMode && it.pendiente > 0 ? (
+                                      <div style={{ display: 'inline-flex', alignItems: 'center', border: '1px solid #e2e8f0', borderRadius: '8px', background: '#fff', overflow: 'hidden' }}>
+                                        <button onClick={() => setDeliveredQtys(p => ({...p, [it.id]: Math.max(0, currentDelQty - 1)}))} disabled={!isSelected} style={{ background: 'none', border: 'none', padding: '6px 10px', cursor: isSelected ? 'pointer' : 'not-allowed', color: '#64748b' }}>-</button>
+                                        <input type="text" value={currentDelQty} onChange={(e) => setDeliveredQtys(p => ({...p, [it.id]: e.target.value}))} disabled={!isSelected} style={{ width: '30px', textAlign: 'center', border: 'none', outline: 'none', fontWeight: 800, fontSize: '0.85rem', color: '#0f172a' }} />
+                                        <button onClick={() => setDeliveredQtys(p => ({...p, [it.id]: Math.min(it.pendiente, currentDelQty + 1)}))} disabled={!isSelected} style={{ background: 'none', border: 'none', padding: '6px 10px', cursor: isSelected ? 'pointer' : 'not-allowed', color: '#64748b' }}>+</button>
+                                      </div>
+                                    ) : (
+                                      <span style={{ background: '#f1f5f9', padding: '6px 12px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: 800, color: '#475569' }}>Completo</span>
+                                    )}
+                                  </td>
+                                  <td style={{ padding: '16px 8px' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                      <div style={{ flex: 1, height: '6px', background: '#e2e8f0', borderRadius: '4px', overflow: 'hidden' }}>
+                                        <div style={{ width: `${advancePrc}%`, height: '100%', background: advancePrc === 100 ? '#16a34a' : '#22c55e' }}></div>
+                                      </div>
+                                      <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#64748b', width: '30px' }}>{advancePrc}%</span>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div style={{ display: 'flex', gap: '16px', marginTop: '24px', fontSize: '0.75rem', fontWeight: 700, color: '#64748b' }}>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#16a34a' }}></div> Enviado completo</span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#f59e0b' }}></div> Pendiente parcial</span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#94a3b8' }}></div> Pendiente total</span>
                       </div>
                     </div>
-                  ))}
-                </div>
-              </div>
 
-              {/* Delivery Info Card */}
-              <div style={{ background: '#fff', borderRadius: '24px', padding: '32px', border: '1.5px solid #f1f5f9', boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-                  <h4 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: '#0f172a' }}>Información de entrega</h4>
-                  {selectedOrder.isNewClient && <span style={{ padding: '4px 10px', background: '#fff7ed', color: '#f97316', borderRadius: '8px', fontSize: '0.65rem', fontWeight: 800 }}>NUEVO CLIENTE</span>}
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                  <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                    <p style={{ margin: 0, width: '100px', fontSize: '0.9rem', fontWeight: 700, color: '#64748b' }}>Dirección:</p>
-                    <input
-                      className="search-input"
-                      style={{ flex: 1, padding: '8px', fontSize: '0.9rem', border: '1px solid #e2e8f0', borderRadius: '8px' }}
-                      placeholder="Ingresa la dirección de entrega"
-                      value={logisticsForm.address}
-                      onChange={(e) => setLogisticsForm({ ...logisticsForm, address: e.target.value })}
-                    />
-                  </div>
-                  <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                    <p style={{ margin: 0, width: '100px', fontSize: '0.9rem', fontWeight: 700, color: '#64748b' }}>Contacto:</p>
-                    <input
-                      className="search-input"
-                      style={{ flex: 1, padding: '8px', fontSize: '0.9rem', border: '1px solid #e2e8f0', borderRadius: '8px' }}
-                      placeholder="Nombre de quien recibe"
-                      value={logisticsForm.contact}
-                      onChange={(e) => setLogisticsForm({ ...logisticsForm, contact: e.target.value })}
-                    />
-                  </div>
-                  <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                    <p style={{ margin: 0, width: '100px', fontSize: '0.9rem', fontWeight: 700, color: '#64748b' }}>Teléfono:</p>
-                    <input
-                      className="search-input"
-                      style={{ flex: 1, padding: '8px', fontSize: '0.9rem', border: '1px solid #e2e8f0', borderRadius: '8px' }}
-                      placeholder="Teléfono de contacto"
-                      value={logisticsForm.phone}
-                      onChange={(e) => setLogisticsForm({ ...logisticsForm, phone: e.target.value })}
-                    />
-                  </div>
-                </div>
-                {(!logisticsForm.address || !logisticsForm.phone) && (
-                  <div style={{ marginTop: '16px', padding: '12px', background: '#fff1f2', borderRadius: '12px', display: 'flex', gap: '10px', alignItems: 'center' }}>
-                    <AlertCircle size={16} color="#e11d48" />
-                    <p style={{ margin: 0, fontSize: '0.8rem', color: '#e11d48', fontWeight: 600 }}>Falta información crítica para el despacho.</p>
+                    <div style={{ background: '#fff', borderRadius: '24px', padding: '32px', border: '1.5px solid #f1f5f9', boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}>
+                      <h4 style={{ margin: '0 0 24px 0', fontSize: '1.1rem', fontWeight: 800, color: '#0f172a' }}>Historial de despachos</h4>
+                      
+                      {dispatchHistory.length === 0 ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', color: '#94a3b8', fontSize: '0.85rem' }}>
+                          <History size={20} />
+                          <p style={{ margin: 0, fontWeight: 600 }}>No hay despachos anteriores para esta orden.</p>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          {dispatchHistory.map((dh, i) => (
+                            <div key={i} style={{ display: 'flex', gap: '16px', position: 'relative', paddingBottom: i === dispatchHistory.length - 1 && totalPendingPieces === 0 ? '0' : '24px' }}>
+                              {/* Línea conectora */}
+                              {(i < dispatchHistory.length - 1 || totalPendingPieces > 0) && (
+                                <div style={{ position: 'absolute', left: '16px', top: '32px', bottom: 0, width: '2px', background: '#e2e8f0' }}></div>
+                              )}
+                              
+                              <div style={{ position: 'relative', zIndex: 2, display: 'flex', alignItems: 'flex-start' }}>
+                                <div style={{ width: '34px', height: '34px', borderRadius: '50%', background: dh.status === 'Entregado' ? '#16a34a' : '#3b82f6', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                  {dh.status === 'Entregado' ? <Check size={18} /> : <Truck size={18} />}
+                                </div>
+                              </div>
+                              
+                              <div style={{ flex: 1, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginTop: '2px' }}>
+                                <div>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                    <h5 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#0f172a' }}>{dh.type}</h5>
+                                    <span style={{ padding: '2px 8px', borderRadius: '6px', fontSize: '0.65rem', fontWeight: 800, background: dh.status === 'Entregado' ? '#dcfce7' : '#dbeafe', color: dh.status === 'Entregado' ? '#16a34a' : '#3b82f6' }}>
+                                      {dh.status}
+                                    </span>
+                                  </div>
+                                  <p style={{ margin: '4px 0 0 0', fontSize: '0.75rem', color: '#64748b', fontWeight: 600 }}>
+                                    {new Date(dh.date).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                  </p>
+                                </div>
+                                <div style={{ textAlign: 'left', minWidth: '150px' }}>
+                                  <p style={{ margin: 0, fontSize: '0.8rem', fontWeight: 700, color: '#475569' }}>{dh.items.length} productos • {dh.totalPieces} piezas</p>
+                                </div>
+                                <div style={{ textAlign: 'left', minWidth: '150px' }}>
+                                  <p style={{ margin: 0, fontSize: '0.8rem', fontWeight: 600, color: '#64748b' }}>Guía: {dh.guide}</p>
+                                </div>
+                                <div>
+                                  <button style={{ background: '#f8fafc', border: '1px solid #e2e8f0', padding: '6px 12px', borderRadius: '8px', color: '#3b82f6', fontSize: '0.75rem', fontWeight: 800, cursor: 'pointer' }} onClick={() => alert('Detalle de los productos: ' + dh.items.map(it => it.cantidad + 'x ' + it.producto).join(', '))}>
+                                    Ver detalle
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                          
+                          {/* Step de Pendiente */}
+                          {totalPendingPieces > 0 && (
+                            <div style={{ display: 'flex', gap: '16px', position: 'relative' }}>
+                              <div style={{ position: 'relative', zIndex: 2, display: 'flex', alignItems: 'flex-start' }}>
+                                <div style={{ width: '34px', height: '34px', borderRadius: '50%', background: '#fff', border: '2px solid #cbd5e1', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                </div>
+                              </div>
+                              <div style={{ flex: 1, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginTop: '2px' }}>
+                                <div>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                    <h5 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#0f172a' }}>Entrega final</h5>
+                                    <span style={{ padding: '2px 8px', borderRadius: '6px', fontSize: '0.65rem', fontWeight: 800, background: '#f1f5f9', color: '#64748b' }}>
+                                      Pendiente
+                                    </span>
+                                  </div>
+                                  <p style={{ margin: '4px 0 0 0', fontSize: '0.75rem', color: '#94a3b8', fontWeight: 600 }}>Pendiente de envío</p>
+                                </div>
+                                <div style={{ textAlign: 'left', minWidth: '150px' }}>
+                                  <p style={{ margin: 0, fontSize: '0.8rem', fontWeight: 700, color: '#94a3b8' }}>{selectedOrder.items.filter(it => it.pendiente > 0).length} productos • {totalPendingPieces} piezas</p>
+                                </div>
+                                <div style={{ textAlign: 'left', minWidth: '150px' }}>
+                                  <p style={{ margin: 0, fontSize: '0.8rem', fontWeight: 600, color: '#94a3b8' }}>Sin guía asignada</p>
+                                </div>
+                                <div style={{ width: '85px' }}></div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ background: '#fff', borderRadius: '24px', padding: '32px', border: '1.5px solid #f1f5f9', boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}>
+                    <h4 style={{ margin: '0 0 24px 0', fontSize: '1.1rem', fontWeight: 800, color: '#0f172a' }}>Productos en esta orden ({selectedOrder.items.length})</h4>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                      {selectedOrder.items.map((it, idx) => (
+                        <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '16px', padding: '12px', background: '#f8fafc', borderRadius: '16px' }}>
+                          <div style={{ width: '50px', height: '50px', background: '#fff', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #e2e8f0' }}>
+                            <Package size={24} color="#16a34a" />
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <p style={{ margin: 0, fontWeight: 800, color: '#1e293b', fontSize: '0.95rem' }}>{it.producto.toUpperCase()}</p>
+                            <p style={{ margin: '2px 0 0 0', fontSize: '0.8rem', color: '#64748b', fontWeight: 600 }}>Pendiente original: {it.pendiente} pzas</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
+              </div>
+
+              {/* Info & Resumen (Right Col) */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                {isClientOrder && isPartialMode && (
+                  <div style={{ background: '#f8fafc', borderRadius: '24px', padding: '32px', border: '1.5px solid #f1f5f9' }}>
+                    <h4 style={{ margin: '0 0 24px 0', fontSize: '1.1rem', fontWeight: 800, color: '#0f172a' }}>Resumen del envío parcial</h4>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '24px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}><Package size={16}/> Productos seleccionados</span>
+                        <span style={{ fontSize: '1rem', color: '#0f172a', fontWeight: 800 }}>{totalSelectedItems}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}><Layers size={16}/> Total de piezas</span>
+                        <span style={{ fontSize: '1rem', color: '#0f172a', fontWeight: 800 }}>{totalSelectedPieces}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}><Scale size={16}/> Peso estimado</span>
+                        <span style={{ fontSize: '0.9rem', color: '#0f172a', fontWeight: 800 }}>--- kg</span>
+                      </div>
+                    </div>
+                    <div style={{ background: '#f0fdf4', padding: '20px', borderRadius: '16px', border: '1px solid #bbf7d0' }}>
+                      <p style={{ margin: '0 0 12px 0', fontSize: '0.8rem', color: '#166534', fontWeight: 800 }}>Después de este envío quedarán:</p>
+                      <ul style={{ margin: 0, paddingLeft: '20px', color: '#15803d', fontSize: '0.8rem', fontWeight: 700, display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <li>{selectedOrder.items.length - totalSelectedItems} productos pendientes</li>
+                        <li>{totalPendingPieces - totalSelectedPieces} piezas pendientes</li>
+                      </ul>
+                    </div>
+                  </div>
+                )}
+
+                <div style={{ background: '#fff', borderRadius: '24px', padding: '32px', border: '1.5px solid #f1f5f9', boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                    <h4 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: '#0f172a' }}>Información de entrega</h4>
+                    {!isClientOrder && <span style={{ padding: '4px 10px', background: '#fff7ed', color: '#f97316', borderRadius: '8px', fontSize: '0.65rem', fontWeight: 800 }}>NUEVO CLIENTE</span>}
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                      <p style={{ margin: 0, width: '90px', fontSize: '0.85rem', fontWeight: 700, color: '#64748b' }}>Dirección:</p>
+                      <input
+                        className="search-input"
+                        style={{ flex: 1, padding: '8px', fontSize: '0.9rem', border: '1px solid #e2e8f0', borderRadius: '8px' }}
+                        placeholder="Ingresa la dirección"
+                        value={logisticsForm.address}
+                        onChange={(e) => setLogisticsForm({ ...logisticsForm, address: e.target.value })}
+                      />
+                    </div>
+                    <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                      <p style={{ margin: 0, width: '90px', fontSize: '0.85rem', fontWeight: 700, color: '#64748b' }}>Contacto:</p>
+                      <input
+                        className="search-input"
+                        style={{ flex: 1, padding: '8px', fontSize: '0.9rem', border: '1px solid #e2e8f0', borderRadius: '8px' }}
+                        placeholder="Nombre de quien recibe"
+                        value={logisticsForm.contact}
+                        onChange={(e) => setLogisticsForm({ ...logisticsForm, contact: e.target.value })}
+                      />
+                    </div>
+                    <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                      <p style={{ margin: 0, width: '90px', fontSize: '0.85rem', fontWeight: 700, color: '#64748b' }}>Teléfono:</p>
+                      <input
+                        className="search-input"
+                        style={{ flex: 1, padding: '8px', fontSize: '0.9rem', border: '1px solid #e2e8f0', borderRadius: '8px' }}
+                        placeholder="Teléfono"
+                        value={logisticsForm.phone}
+                        onChange={(e) => setLogisticsForm({ ...logisticsForm, phone: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                  {(!logisticsForm.address || !logisticsForm.phone) && (
+                    <div style={{ marginTop: '16px', padding: '12px', background: '#fff1f2', borderRadius: '12px', display: 'flex', gap: '10px', alignItems: 'center' }}>
+                      <AlertCircle size={16} color="#e11d48" />
+                      <p style={{ margin: 0, fontSize: '0.8rem', color: '#e11d48', fontWeight: 600 }}>Falta información crítica para el despacho.</p>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 
             {/* Action Buttons */}
-            <div style={{ display: 'flex', gap: '20px', marginTop: '48px' }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '16px', marginTop: '48px', borderTop: '1px solid #f1f5f9', paddingTop: '32px' }}>
               <button
                 onClick={() => setSelectedOrder(null)}
                 style={{
-                  flex: 0.3,
-                  padding: '18px',
-                  borderRadius: '20px',
-                  border: '2px solid #e2e8f0',
+                  padding: '16px 32px',
+                  borderRadius: '16px',
+                  border: '1.5px solid #e2e8f0',
                   background: '#fff',
                   color: '#475569',
                   fontWeight: 800,
@@ -10062,28 +11842,28 @@ function LogisticaModule({ onBack, backorders, handleDeliver, refreshData, prosp
               <button
                 onClick={handleConfirmDispatch}
                 style={{
-                  flex: 1,
-                  padding: '18px',
-                  borderRadius: '20px',
+                  padding: '16px 40px',
+                  borderRadius: '16px',
                   border: 'none',
-                  background: '#16a34a',
+                  background: isClientOrder && isPartialMode ? '#3b82f6' : '#16a34a',
                   color: '#fff',
                   fontWeight: 800,
-                  fontSize: '1.1rem',
+                  fontSize: '1.05rem',
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
-                  justifyContent: 'center',
                   gap: '12px',
-                  boxShadow: '0 10px 20px -5px rgba(22, 163, 74, 0.4)',
+                  boxShadow: isClientOrder && isPartialMode ? '0 10px 20px -5px rgba(59, 130, 246, 0.4)' : '0 10px 20px -5px rgba(22, 163, 74, 0.4)',
                   transition: 'all 0.2s'
                 }}>
-                <Truck size={22} /> Confirmar Despacho
+                <Truck size={20} /> 
+                {isClientOrder && isPartialMode ? 'Generar despacho parcial' : 'Confirmar Despacho'}
               </button>
             </div>
           </div>
         </div>
-      )}
+      );
+      })()}
 
       {/* Modal de confirmación y alertas de logística */}
       {alertModal.show && (
@@ -10292,5 +12072,147 @@ function LogisticaModule({ onBack, backorders, handleDeliver, refreshData, prosp
   );
 }
 
-export default App;
+function CentroControlModule({ onBack, user, activities, backorders, prospects }) {
+  const [activeTab, setActiveTab] = React.useState('live');
 
+  // Mocks for Auditoria and Aprobaciones
+  const [approvals, setApprovals] = React.useState([
+    { id: 1, type: 'Descuento', client: 'Frutos de la Tierra', user: 'Edgar Leyton', date: new Date().toISOString(), amount: '$15,000 MXN', discount: '15%', reason: 'Cliente frecuente, solicitó igualar oferta de competidor.', status: 'pending' },
+    { id: 2, type: 'Crédito', client: 'RANCHO LOS CABALLOS', user: 'Oficina Celaya', date: new Date(Date.now() - 3600000).toISOString(), amount: '$45,000 MXN', details: 'Ampliación de línea a 60 días', reason: 'Expansión de terreno', status: 'pending' }
+  ]);
+
+  const [auditLogs] = React.useState([
+    { id: 1, time: new Date().toISOString(), user: 'Magdalena Dominguez', action: 'Aplicó descuento de 5%', target: 'Folio AGRO-303161' },
+    { id: 2, time: new Date(Date.now() - 7200000).toISOString(), user: 'Edgar Leyton', action: 'Convirtió Prospecto a Cliente', target: 'Grecia Flores' },
+    { id: 3, time: new Date(Date.now() - 86400000).toISOString(), user: 'Administrador Master', action: 'Actualizó stock de producto', target: 'ECLIPSE LD (+150 unid.)' },
+    { id: 4, time: new Date(Date.now() - 90000000).toISOString(), user: 'Oficina Celaya', action: 'Canceló pedido', target: 'Folio AGRO-590404' }
+  ]);
+
+  const handleApprove = (id) => {
+    setApprovals(prev => prev.map(a => a.id === id ? { ...a, status: 'approved' } : a));
+  };
+
+  const handleReject = (id) => {
+    setApprovals(prev => prev.map(a => a.id === id ? { ...a, status: 'rejected' } : a));
+  };
+
+  return (
+    <div className="centro-control-container" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '20px', fontFamily: 'Inter, sans-serif' }}>
+      <div className="module-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <h1 style={{ fontSize: '1.8rem', fontWeight: 800, margin: 0, color: '#0f172a' }}>Centro de Control Directivo</h1>
+          <p style={{ color: '#64748b', margin: '5px 0 0 0' }}>Supervisión de operaciones, auditoría de seguridad y aprobaciones.</p>
+        </div>
+      </div>
+
+      <div className="control-tabs" style={{ display: 'flex', gap: '10px', background: '#f8fafc', padding: '10px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+        <button onClick={() => setActiveTab('live')} style={{ padding: '10px 20px', borderRadius: '8px', border: 'none', background: activeTab === 'live' ? '#fff' : 'transparent', color: activeTab === 'live' ? '#16a34a' : '#64748b', fontWeight: activeTab === 'live' ? 700 : 500, boxShadow: activeTab === 'live' ? '0 2px 4px rgba(0,0,0,0.05)' : 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
+           Actividad en Vivo
+        </button>
+        <button onClick={() => setActiveTab('approvals')} style={{ padding: '10px 20px', borderRadius: '8px', border: 'none', background: activeTab === 'approvals' ? '#fff' : 'transparent', color: activeTab === 'approvals' ? '#eab308' : '#64748b', fontWeight: activeTab === 'approvals' ? 700 : 500, boxShadow: activeTab === 'approvals' ? '0 2px 4px rgba(0,0,0,0.05)' : 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
+           Aprobaciones Pendientes {approvals.filter(a => a.status === 'pending').length > 0 && <span style={{ background: '#eab308', color: '#fff', padding: '2px 8px', borderRadius: '12px', fontSize: '0.75rem' }}>{approvals.filter(a => a.status === 'pending').length}</span>}
+        </button>
+        <button onClick={() => setActiveTab('audit')} style={{ padding: '10px 20px', borderRadius: '8px', border: 'none', background: activeTab === 'audit' ? '#fff' : 'transparent', color: activeTab === 'audit' ? '#3b82f6' : '#64748b', fontWeight: activeTab === 'audit' ? 700 : 500, boxShadow: activeTab === 'audit' ? '0 2px 4px rgba(0,0,0,0.05)' : 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
+           Bitácora de Auditoría
+        </button>
+      </div>
+
+      <div className="control-content" style={{ background: '#fff', borderRadius: '16px', border: '1px solid #e2e8f0', padding: '24px', minHeight: '500px' }}>
+        {activeTab === 'live' && (
+          <div>
+            <h2 style={{ fontSize: '1.2rem', color: '#0f172a', marginBottom: '20px' }}>Actividad Comercial Reciente</h2>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+              {(activities || []).slice(0, 10).map((act, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: '15px', padding: '15px', background: '#f8fafc', borderRadius: '12px', border: '1px solid #f1f5f9' }}>
+                  <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: '#dcfce7', color: '#16a34a', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>
+                    {act.client ? act.client.charAt(0).toUpperCase() : 'A'}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <h4 style={{ margin: '0 0 5px 0', color: '#0f172a', fontSize: '0.95rem' }}>{act.title || act.type}</h4>
+                    <p style={{ margin: 0, color: '#64748b', fontSize: '0.85rem' }}>{act.description || act.subtitle}</p>
+                  </div>
+                  <div style={{ color: '#94a3b8', fontSize: '0.8rem' }}>
+                    {act.date || new Date(act.rawDate || act.createdAt || Date.now()).toLocaleDateString()}
+                  </div>
+                </div>
+              ))}
+              {(!activities || activities.length === 0) && (
+                <p style={{ color: '#64748b', textAlign: 'center', padding: '40px' }}>No hay actividad reciente registrada en el CRM.</p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'approvals' && (
+          <div>
+            <h2 style={{ fontSize: '1.2rem', color: '#0f172a', marginBottom: '20px' }}>Autorizaciones Requeridas</h2>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+              {approvals.map(app => (
+                <div key={app.id} style={{ border: '1px solid #e2e8f0', borderRadius: '12px', padding: '20px', background: app.status === 'pending' ? '#fff' : '#f8fafc', opacity: app.status === 'pending' ? 1 : 0.6 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '15px' }}>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+                        <span style={{ padding: '4px 10px', background: '#fef9c3', color: '#a16207', borderRadius: '6px', fontSize: '0.75rem', fontWeight: 800 }}>{app.type}</span>
+                        <span style={{ color: '#64748b', fontSize: '0.85rem' }}>Solicitado por <strong>{app.user}</strong></span>
+                      </div>
+                      <h3 style={{ margin: '0 0 5px 0', fontSize: '1.1rem', color: '#0f172a' }}>{app.client}</h3>
+                      <p style={{ margin: 0, color: '#475569', fontSize: '0.9rem' }}>Monto de Operación: <strong>{app.amount}</strong></p>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: '0.8rem', color: '#94a3b8' }}>{new Date(app.date).toLocaleString()}</div>
+                    </div>
+                  </div>
+                  <div style={{ background: '#f1f5f9', padding: '15px', borderRadius: '8px', marginBottom: '15px' }}>
+                    <p style={{ margin: '0 0 5px 0', color: '#334155', fontSize: '0.9rem' }}><strong>Detalles:</strong> {app.discount ? `Descuento del ${app.discount}` : app.details}</p>
+                    <p style={{ margin: 0, color: '#64748b', fontSize: '0.9rem' }}><strong>Justificación:</strong> {app.reason}</p>
+                  </div>
+                  
+                  {app.status === 'pending' ? (
+                    <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                      <button onClick={() => handleReject(app.id)} style={{ padding: '8px 20px', background: '#fff', border: '1px solid #ef4444', color: '#ef4444', borderRadius: '8px', fontWeight: 600, cursor: 'pointer' }}>Rechazar</button>
+                      <button onClick={() => handleApprove(app.id)} style={{ padding: '8px 20px', background: '#16a34a', border: 'none', color: '#fff', borderRadius: '8px', fontWeight: 600, cursor: 'pointer' }}>Autorizar Operación</button>
+                    </div>
+                  ) : (
+                    <div style={{ textAlign: 'right', fontWeight: 700, color: app.status === 'approved' ? '#16a34a' : '#ef4444' }}>
+                      {app.status === 'approved' ? 'Operación Autorizada' : 'Operación Rechazada'}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'audit' && (
+          <div>
+            <h2 style={{ fontSize: '1.2rem', color: '#0f172a', marginBottom: '20px' }}>Bitácora de Auditoría (Acciones de Usuarios)</h2>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                <thead>
+                  <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
+                    <th style={{ padding: '12px 15px', color: '#475569', fontSize: '0.85rem', fontWeight: 700 }}>FECHA / HORA</th>
+                    <th style={{ padding: '12px 15px', color: '#475569', fontSize: '0.85rem', fontWeight: 700 }}>USUARIO</th>
+                    <th style={{ padding: '12px 15px', color: '#475569', fontSize: '0.85rem', fontWeight: 700 }}>ACCIÓN REALIZADA</th>
+                    <th style={{ padding: '12px 15px', color: '#475569', fontSize: '0.85rem', fontWeight: 700 }}>OBJETIVO / AFECTADO</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {auditLogs.map(log => (
+                    <tr key={log.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                      <td style={{ padding: '15px', color: '#64748b', fontSize: '0.85rem' }}>{new Date(log.time).toLocaleString()}</td>
+                      <td style={{ padding: '15px', color: '#0f172a', fontSize: '0.9rem', fontWeight: 600 }}>{log.user}</td>
+                      <td style={{ padding: '15px', color: '#334155', fontSize: '0.9rem' }}>{log.action}</td>
+                      <td style={{ padding: '15px', color: '#3b82f6', fontSize: '0.9rem', fontWeight: 600 }}>{log.target}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default App;

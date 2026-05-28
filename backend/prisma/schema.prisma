@@ -29,6 +29,8 @@ model Product {
   margin      Float    @default(0.0)
   price       Float    @default(0.0)
   tax         Float    @default(16.0)
+  minStock    Int      @default(10)
+  image       String?
   createdAt   DateTime @default(now())
 }
 
@@ -43,6 +45,17 @@ model Backorder {
   precio    Float    @default(0.0)
   estado    String   @default("En Proceso")
   prioridad String?
+  isNewClient Boolean  @default(false)
+  // Campos de Logística
+  driverName   String?
+  unitInfo     String?
+  routeInfo    String?
+  deliveryNotes String?
+  deliveredQty Int      @default(0)
+  billingStatus String  @default("Pendiente")
+  deliveredAt  DateTime?
+  fechaEntrega DateTime?
+  dispatchHistory Json?
   createdAt DateTime @default(now())
 }
 
@@ -61,6 +74,7 @@ model Prospect {
   appointmentMethod String?
   meetingDone       Boolean  @default(false)
   createdAt DateTime @default(now())
+  closedAt  DateTime?
 }
 
 model Activity {
