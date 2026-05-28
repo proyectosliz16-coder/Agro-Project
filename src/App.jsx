@@ -9175,6 +9175,10 @@ function App() {
 
         <nav className="sidebar-nav" style={{ overflowY: 'auto', paddingRight: '4px' }}>
           <SidebarItem icon={Home} label="Dashboard" active={view === 'Dashboard'} onClick={() => setView('Dashboard')} />
+          
+          {(user?.role === 'Master' || user?.role === 'Administrador Master' || user?.role === 'Admin' || user?.role === 'admin' || user?.role === 'Administrador') && (
+            <SidebarItem icon={ShieldAlert} label="Centro de Control" active={view === 'CentroControl'} onClick={() => setView('CentroControl')} />
+          )}
 
           <SidebarSection title="OPERACIÓN" isOpen={operacionOpen} onToggle={() => setOperacionOpen(!operacionOpen)} />
           {operacionOpen && (
@@ -9215,9 +9219,6 @@ function App() {
               )}
               {user?.role !== 'Vendedor' && user?.role !== 'vendedor' && (
                 <SidebarItem icon={Users} label="Personal" active={view === 'Personal'} onClick={() => setView('Personal')} />
-              )}
-              {(user?.role === 'Master' || user?.role === 'Administrador Master' || user?.role === 'Admin' || user?.role === 'admin' || user?.role === 'Administrador') && (
-                <SidebarItem icon={ShieldAlert} label="Centro de Control" active={view === 'CentroControl'} onClick={() => setView('CentroControl')} />
               )}
               {(user?.role === 'Master' || user?.role === 'Administrador Master') && (
                 <SidebarItem icon={Settings} label="Sistema" active={view === 'Sistema'} onClick={() => setView('Sistema')} />
