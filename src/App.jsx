@@ -9124,7 +9124,6 @@ function App() {
         setManualClientName={setManualClientName}
         fechaEntrega={fechaEntrega}
         setFechaEntrega={setFechaEntrega}
-        setManualClientName={setManualClientName}
         cart={cart}
         setCart={setCart}
         addToCart={addToCart}
