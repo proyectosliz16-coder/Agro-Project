@@ -180,9 +180,9 @@ function Login({ onLogin, onGoToRegister }) {
   const [selectedProfile, setSelectedProfile] = useState(null);
 
   const profiles = [
-    { title: 'Master', email: 'master@agriflow.com', icon: LayoutGrid, color: '#f59e0b', desc: 'Control Total' },
-    { title: 'Admin', email: 'admin@agriflow.com', icon: Users, color: '#2d5a3f', desc: 'Operaciones' },
-    { title: 'Vendedor', email: 'vendedor@agriflow.com', icon: DollarSign, color: '#22c55e', desc: 'Ventas/Campo' }
+    { title: 'Master', email: 'master@agriflow.com', password: '1234', icon: LayoutGrid, color: '#f59e0b', desc: 'Control Total' },
+    { title: 'Admin', email: 'admin@agriflow.com', password: 'adminpassword', icon: Users, color: '#2d5a3f', desc: 'Operaciones' },
+    { title: 'Vendedor', email: 'vendedor@agriflow.com', password: 'vendedorpassword', icon: DollarSign, color: '#22c55e', desc: 'Ventas/Campo' }
   ];
 
   const handleSubmit = async (e) => {
@@ -225,7 +225,7 @@ function Login({ onLogin, onGoToRegister }) {
                   onClick={() => {
                     setSelectedProfile(p);
                     setEmail(p.email);
-                    setPassword('1234');
+                    setPassword(p.password);
                   }}
                 >
                   <Icon size={24} />
