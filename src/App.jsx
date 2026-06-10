@@ -56,6 +56,7 @@ import {
   ArrowRight,
   Navigation,
   UserCheck,
+  User,
   ClipboardCheck,
   MoreHorizontal,
   MoreVertical,
@@ -69,7 +70,8 @@ import {
   Sliders,
   Layers,
   Scale,
-  Box
+  Box,
+  Edit2
 } from 'lucide-react';
 
 const GlobalStyles = () => (
@@ -189,7 +191,7 @@ function Login({ onLogin, onGoToRegister }) {
       const response = await fetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: selectedProfile ? selectedProfile.email : email, password: password })
+        body: JSON.stringify({ email: email, password: password })
       });
 
       const data = await response.json();
@@ -211,7 +213,7 @@ function Login({ onLogin, onGoToRegister }) {
       </div>
       <div className="login-right">
         <div className="login-card">
-          <h2>Iniciar sesion</h2>
+          <h2>Iniciar sesión</h2>
 
           <div className="role-selector">
             {profiles.map(p => {
@@ -223,7 +225,7 @@ function Login({ onLogin, onGoToRegister }) {
                   onClick={() => {
                     setSelectedProfile(p);
                     setEmail(p.email);
-                    setPassword(p.email === 'vendedor@agriflow.com' ? 'vendedorpassword' : '1234');
+                    setPassword('1234');
                   }}
                 >
                   <Icon size={24} />
@@ -239,7 +241,10 @@ function Login({ onLogin, onGoToRegister }) {
               <input
                 type="email"
                 value={email}
-                onChange={e => setEmail(e.target.value)}
+                onChange={e => {
+                  setEmail(e.target.value);
+                  setSelectedProfile(null);
+                }}
                 placeholder="Correo electrónico"
                 required
               />
@@ -250,13 +255,14 @@ function Login({ onLogin, onGoToRegister }) {
               <input
                 type="password"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  setSelectedProfile(null);
+                }}
                 placeholder="Contraseña"
                 required
               />
             </div>
-
-            <p className="demo-hint">* Escribe tu contraseña (demo master: 1234)</p>
 
             <button type="submit" className="login-btn">Entrar</button>
           </form>
@@ -357,9 +363,8 @@ function ViewHeader({ title, subtitle, icon: Icon = BarChart2, onBack, children 
 }
 
 // 1. Módulo de Backorders
-function BackordersModule({ onBack, user, refreshAllData, onEditOrder, isNewClientFilter = false, title = "Backorders", products = [], prospects = [] }) {
-  const [backorders, setBackorders] = useState([]); // Iniciamos vacío
-  const [loading, setLoading] = useState(true);
+function BackordersModule({ onBack, user, refreshAllData, onEditOrder, isNewClientFilter = false, title = "Backorders", products = [], prospects = [], backorders = [] }) {
+  const [loading, setLoading] = useState(false);
 
   // Estados para filtros
   const [filterCliente, setFilterCliente] = useState('');
@@ -439,23 +444,7 @@ function BackordersModule({ onBack, user, refreshAllData, onEditOrder, isNewClie
     });
   };
 
-  // EFECTO: Cargar datos desde la base de datos al entrar
-  useEffect(() => {
-    fetchBackorders();
-  }, []);
-
-  const fetchBackorders = async () => {
-    try {
-      setLoading(true);
-      const response = await fetch('/api/backorders');
-      const data = await response.json();
-      setBackorders(data);
-    } catch (error) {
-      console.error('Error al cargar backorders:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Use global data instead of local fetch
 
   const handleInputChange = (e) => {
     // Obsoleto con el nuevo sistema de edición en cotizador
@@ -579,7 +568,7 @@ function BackordersModule({ onBack, user, refreshAllData, onEditOrder, isNewClie
 
             <div style={{ display: 'flex', gap: '10px' }}>
               <button
-                onClick={() => fetchBackorders()}
+                onClick={() => refreshAllData()}
                 style={{ padding: '8px 16px', borderRadius: '10px', border: '1px solid #e2e8f0', background: '#fff', color: '#64748b', fontWeight: 700, fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
                 <Clock size={14} /> Actualizar
               </button>
@@ -3390,6 +3379,7 @@ function VentasModule({ onBack, onNavigate, setQuotingProspect, user, backorders
   const [showLocationModal, setShowLocationModal] = React.useState(false);
   const [showLostModal, setShowLostModal] = React.useState(false);
   const [showAppSuccessModal, setShowAppSuccessModal] = React.useState(false);
+  const [showRestartSuccessModal, setShowRestartSuccessModal] = React.useState(false);
   const [prospectToLose, setProspectToLose] = React.useState(null);
   const [locationProspect, setLocationProspect] = React.useState(null);
   const [locationForm, setLocationForm] = React.useState({ address: '', references: '', coordinates: '' });
@@ -3426,19 +3416,7 @@ function VentasModule({ onBack, onNavigate, setQuotingProspect, user, backorders
     amount: ''
   });
 
-  if (!isAdmin) {
-    return (
-      <div className="module-container" style={{ background: '#f8fafc', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div style={{ textAlign: 'center', background: '#fff', padding: '60px', borderRadius: '24px', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.05)' }}>
-          <AlertCircle size={64} color="#dc2626" style={{ margin: '0 auto 20px auto' }} />
-          <h2 style={{ color: '#0f172a', marginBottom: '8px' }}>Acceso Restringido</h2>
-          <p style={{ color: '#64748b', marginBottom: '24px' }}>Solo personal administrativo puede ver el flujo de ventas.</p>
-          <button className="btn-secondary" onClick={onBack}>Regresar al Dashboard</button>
-        </div>
-      </div>
-    );
-  }
-
+  // Permitir a todos los usuarios autorizados (incluyendo vendedores) acceder al Pipeline
   const prospectStages = [
     { name: 'Contacto', icon: Phone, color: '#10b981' },
     { name: 'Agendar Cita', icon: Calendar, color: '#10b981' },
@@ -3478,7 +3456,8 @@ function VentasModule({ onBack, onNavigate, setQuotingProspect, user, backorders
           interest: newProspectForm.interest,
           stage: 'Contacto',
           isClient: false,
-          budget: 0
+          budget: 0,
+          vendedor: user?.name || ''
         })
       });
       if (resp.ok) {
@@ -3556,24 +3535,20 @@ function VentasModule({ onBack, onNavigate, setQuotingProspect, user, backorders
 
   const handleRestartPipeline = async (p) => {
     try {
-      const res = await fetch('/api/prospects', {
-        method: 'POST',
+      const res = await fetch(`/api/prospects/${p.id}`, {
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: p.name,
-          phone: p.phone,
-          email: p.email,
-          interest: p.interest,
-          location: p.location,
-          budget: p.budget,
           notes: (p.notes || '') + '\n\n[Sistema]: Pipeline reiniciado desde un negocio perdido.',
           stage: 'Contacto',
-          isClient: false
+          isClient: false,
+          status: 'Activo',
+          closedAt: null
         })
       });
       if (res.ok) {
         if (refreshData) refreshData();
-        alert('Se ha reiniciado el pipeline. El registro anterior se conservó como Perdido en el historial.');
+        setShowRestartSuccessModal(true);
       } else {
         alert('Error al reiniciar pipeline.');
       }
@@ -3654,6 +3629,7 @@ function VentasModule({ onBack, onNavigate, setQuotingProspect, user, backorders
             documento: saleClosureForm.referenceNumber || `AGRO-${Date.now().toString().slice(-6)}`,
             fecha: new Date().toISOString().split('T')[0],
             cliente: closingProspect.name,
+            vendedor: closingProspect.vendedor || user?.name || 'Sistema',
             codigo: 'AGRO-CRM',
             producto: closingProspect.interest || 'Pedido de Venta desde CRM',
             cantidad: 1,
@@ -4355,6 +4331,77 @@ function VentasModule({ onBack, onNavigate, setQuotingProspect, user, backorders
           </div>
         )}
       </div>
+
+      {/* MODAL DE NEGOCIO PERDIDO */}
+      {showLostModal && prospectToLose && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.6)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
+          <div style={{ background: '#fff', width: '450px', borderRadius: '24px', overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}>
+            <div style={{ padding: '24px', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#dc2626' }}>
+              <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 800, color: '#fff' }}>Perder Negocio</h3>
+              <button onClick={() => setShowLostModal(false)} style={{ background: 'rgba(255,255,255,0.2)', border: 'none', width: '32px', height: '32px', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#fff' }}>
+                <X size={18} />
+              </button>
+            </div>
+            <div style={{ padding: '24px' }}>
+              <p style={{ margin: '0 0 16px 0', fontSize: '0.9rem', color: '#475569' }}>
+                ¿Estás seguro que deseas marcar el negocio con <strong>{prospectToLose.name}</strong> como perdido?
+              </p>
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <button onClick={() => setShowLostModal(false)} style={{ flex: 1, padding: '14px', borderRadius: '14px', border: '1px solid #e2e8f0', background: '#f8fafc', color: '#475569', fontWeight: 800, fontSize: '0.95rem', cursor: 'pointer' }}>
+                  Cancelar
+                </button>
+                <button onClick={async () => {
+                  try {
+                    // Primero obtenemos las notas actuales
+                    const currentNotes = prospectToLose.notes || '';
+                    const lostNote = `\n\n[SISTEMA] Negocio marcado como PERDIDO el ${new Date().toLocaleDateString()}. Se reinició al pipeline en etapa Contacto.`;
+                    
+                    await fetch(`/api/prospects/${prospectToLose.id}`, {
+                      method: 'PUT',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ 
+                        stage: 'Contacto', 
+                        status: 'Activo',
+                        notes: currentNotes + lostNote,
+                        closedAt: null
+                      })
+                    });
+                    refreshData();
+                    setShowLostModal(false);
+                  } catch (e) { console.error(e); }
+                }} style={{ flex: 1, padding: '14px', borderRadius: '14px', border: 'none', background: '#dc2626', color: '#fff', fontWeight: 800, fontSize: '0.95rem', cursor: 'pointer' }}>
+                  Confirmar Pérdida
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE ÉXITO AL REINICIAR PIPELINE */}
+      {showRestartSuccessModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.6)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
+          <div style={{ background: '#fff', width: '400px', borderRadius: '24px', overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}>
+            <div style={{ padding: '24px', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#10b981' }}>
+              <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 800, color: '#fff' }}>Pipeline Reiniciado</h3>
+              <button onClick={() => setShowRestartSuccessModal(false)} style={{ background: 'rgba(255,255,255,0.2)', border: 'none', width: '32px', height: '32px', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#fff' }}>
+                <X size={18} />
+              </button>
+            </div>
+            <div style={{ padding: '24px', textAlign: 'center' }}>
+              <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: '#dcfce7', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px auto' }}>
+                <CheckCircle2 size={32} color="#16a34a" />
+              </div>
+              <p style={{ margin: '0 0 24px 0', fontSize: '0.95rem', color: '#475569', lineHeight: '1.5' }}>
+                El prospecto ha sido movido a la etapa de <strong>Contacto</strong> exitosamente. El registro anterior se conservó en la bitácora.
+              </p>
+              <button onClick={() => setShowRestartSuccessModal(false)} style={{ width: '100%', padding: '14px', borderRadius: '14px', border: 'none', background: '#10b981', color: '#fff', fontWeight: 800, fontSize: '0.95rem', cursor: 'pointer', boxShadow: '0 4px 6px -1px rgba(16,185,129,0.3)' }}>
+                Aceptar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* MODAL DE NUEVO PROSPECTO */}
       {showNewProspectModal && (
@@ -5213,7 +5260,8 @@ function VentasModule({ onBack, onNavigate, setQuotingProspect, user, backorders
 
 
 // 5. Módulo Prospectos
-function ProspectosModule({ onBack, prospects, setProspects, refreshProspects, onNavigate, mode = 'prospects', autoEditProspectId, setAutoEditProspectId, backorders = [] }) {
+function ProspectosModule({ onBack, prospects, setProspects, refreshProspects, onNavigate, mode = 'prospects', autoEditProspectId, setAutoEditProspectId, backorders = [], user }) {
+  const isAdmin = user?.role === 'Master' || user?.role === 'Administrador Master' || user?.role === 'Administrador' || user?.role === 'admin';
   const [loading, setLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -5221,7 +5269,7 @@ function ProspectosModule({ onBack, prospects, setProspects, refreshProspects, o
   const [successModal, setSuccessModal] = useState({ show: false, title: '', message: '' });
   const [historyModal, setHistoryModal] = useState({ show: false, clientName: '', orders: [] });
   const [formData, setFormData] = useState({
-    name: '', phone: '', email: '', interest: '', location: '', budget: '', stage: mode === 'clients' ? 'Venta Cerrada' : 'Contacto'
+    name: '', phone: '', email: '', interest: '', location: '', budget: '', stage: mode === 'clients' ? 'Venta Cerrada' : 'Contacto', vendedor: ''
   });
 
   const displayList = (Array.isArray(prospects) ? prospects : []).filter(p =>
@@ -5230,40 +5278,6 @@ function ProspectosModule({ onBack, prospects, setProspects, refreshProspects, o
 
   useEffect(() => {
     refreshProspects();
-
-    // Cierre automático solicitado por el usuario para Rancho Las 3 Marías
-    const rancho = displayList.find(p => p.name.toUpperCase().includes('RANCHO LAS 3 MARIAS'));
-    if (rancho && rancho.stage === 'Negociación') {
-      const closeRancho = async () => {
-        try {
-          // 1. Mover etapa a Cierre
-          await fetch(`/api/prospects/${rancho.id}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...rancho, stage: 'Venta Cerrada', isClient: true })
-          });
-
-          // 2. Crear Backorder para Facturación
-          await fetch('/api/backorders', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              cliente: rancho.name,
-              producto: 'Insumos Agrícolas (Cierre Directo)',
-              documento: `AGRO-${Date.now().toString().slice(-4)}`,
-              precio: 120000,
-              cantidad: 1,
-              pendiente: 1,
-              estado: 'Entrega Pendiente',
-              prioridad: 'Alta'
-            })
-          });
-
-          refreshProspects();
-        } catch (err) { console.error('Error al cerrar trato del Rancho:', err); }
-      };
-      closeRancho();
-    }
   }, []);
 
   useEffect(() => {
@@ -5289,14 +5303,7 @@ function ProspectosModule({ onBack, prospects, setProspects, refreshProspects, o
     }
   }, [autoEditProspectId, prospects]);
 
-  const fetchProspects = async () => {
-    try {
-      setLoading(true);
-      const res = await fetch('/api/prospects');
-      const data = await res.json();
-      setProspects(data);
-    } catch (err) { console.error(err); } finally { setLoading(false); }
-  };
+  // Use global refreshProspects instead
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -5314,6 +5321,7 @@ function ProspectosModule({ onBack, prospects, setProspects, refreshProspects, o
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...formData,
+          vendedor: formData.vendedor || user?.name || '',
           budget: parseFloat(formData.budget) || 0,
           isClient: mode === 'clients' || formData.stage === 'Venta Cerrada' || formData.stage === 'Venta Completada'
         })
@@ -5330,6 +5338,7 @@ function ProspectosModule({ onBack, prospects, setProspects, refreshProspects, o
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 cliente: formData.name,
+                vendedor: formData.vendedor || user?.name || 'Sistema',
                 producto: formData.interest || 'Pedido de Venta',
                 documento: `AGRO-${Date.now().toString().slice(-4)}`,
                 precio: parseFloat(formData.budget) || 0,
@@ -5372,7 +5381,8 @@ function ProspectosModule({ onBack, prospects, setProspects, refreshProspects, o
       interest: prospect.interest || '',
       location: prospect.location || '',
       budget: prospect.budget || '',
-      stage: prospect.stage || 'Contacto'
+      stage: prospect.stage || 'Contacto',
+      vendedor: prospect.vendedor || ''
     });
     setShowForm(true);
   };
@@ -5381,7 +5391,7 @@ function ProspectosModule({ onBack, prospects, setProspects, refreshProspects, o
     setShowForm(false);
     setEditingId(null);
     setIsNewClientWizard(false);
-    setFormData({ name: '', phone: '', email: '', interest: '', location: '', budget: '', stage: 'Contacto' });
+    setFormData({ name: '', phone: '', email: '', interest: '', location: '', budget: '', stage: 'Contacto', vendedor: '' });
   };
 
   const updateStage = async (prospect, newStage) => {
@@ -5406,6 +5416,7 @@ function ProspectosModule({ onBack, prospects, setProspects, refreshProspects, o
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               cliente: prospect.name,
+              vendedor: prospect.vendedor || user?.name || 'Sistema',
               producto: prospect.interest || 'Pedido de Venta',
               documento: `AGRO-${Date.now().toString().slice(-4)}`,
               precio: parseFloat(prospect.budget) || 0,
@@ -5567,26 +5578,36 @@ function ProspectosModule({ onBack, prospects, setProspects, refreshProspects, o
 
 
                         {/* Quick Stage Actions */}
-                        {!prospect.isClient ? (
-                          <div style={{ display: 'flex', gap: '8px' }}>
-                            {prospect.stage === 'Contacto' && (
-                              <button onClick={() => updateStage(prospect, 'Evaluación')} style={{ background: '#f0fdfa', border: '1px solid #99f6e4', color: '#0d9488', padding: '8px 12px', borderRadius: '10px', fontSize: '0.65rem', fontWeight: 800, cursor: 'pointer' }}>Evaluar →</button>
-                            )}
-                          </div>
-                        ) : (
-                          <div style={{ display: 'flex', gap: '8px' }}>
-                            <button 
-                              onClick={() => {
-                                if (typeof onNavigate === 'function') {
-                                  onNavigate('productos', prospect.name);
-                                }
-                              }} 
-                              style={{ background: '#2d5a3f', border: 'none', color: '#fff', padding: '8px 14px', borderRadius: '10px', fontSize: '0.7rem', fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
-                            >
-                              <Plus size={14} /> Nueva Orden
-                            </button>
-                          </div>
-                        )}
+                        {(() => {
+                          const assignedTo = prospect.vendedor || prospect.seller || null;
+                          const isMine = !assignedTo || assignedTo === user?.name;
+                          
+                          if (isAdmin && !isMine) {
+                            return (
+                              <div style={{ display: 'flex', gap: '8px' }}>
+                                <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', color: '#64748b', padding: '6px 10px', borderRadius: '8px', fontSize: '0.65rem', fontWeight: 800 }}>
+                                  <User size={12} style={{ marginRight: '4px', verticalAlign: 'middle' }} />
+                                  {assignedTo}
+                                </div>
+                              </div>
+                            );
+                          }
+
+                          return (
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                              <button 
+                                onClick={() => {
+                                  if (typeof onNavigate === 'function') {
+                                    onNavigate('productos', prospect.name);
+                                  }
+                                }} 
+                                style={{ background: '#2d5a3f', border: 'none', color: '#fff', padding: '8px 14px', borderRadius: '10px', fontSize: '0.7rem', fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                              >
+                                <Plus size={14} /> Nueva Orden
+                              </button>
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
                   </div>
@@ -6682,55 +6703,102 @@ function ProductosModule({ onBack, onNavigate, returnView = 'Ventas', quotingPro
         return;
       } else if (manualClientName) {
         if (!editingFolio) {
-          // CREAR NUEVO PROSPECTO AUTOMÁTICAMENTE SI FUE MANUAL Y ES NUEVA COTIZACIÓN
-          const itemsList = cart.map(item => `${item.name} (${item.qty})`).join(', ');
+          const nameToCheck = manualClientName.trim().toLowerCase();
+          const existingProspect = (prospects || []).find(p => p.name.trim().toLowerCase() === nameToCheck);
 
-          const pResp = await fetch('/api/prospects', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              name: manualClientName,
-              interest: itemsList.substring(0, 200),
-              budget: cartTotal,
-              stage: 'Negociación',
-              isClient: false
-            })
-          });
-          let newProspectId = null;
-          try {
-            const createdP = await pResp.json();
-            newProspectId = createdP.id;
-          } catch (err) {
-            console.error('Error parsing created prospect:', err);
-          }
+          if (existingProspect) {
+            const itemsList = cart.map(item => `${item.name} (${item.qty})`).join(', ');
+            await fetch(`/api/prospects/${existingProspect.id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                interest: itemsList.substring(0, 200),
+                budget: cartTotal,
+                stage: existingProspect.stage || 'Negociación',
+                vendedor: existingProspect.vendedor || user?.name || '',
+                lastQuoteDate: new Date().toISOString()
+              })
+            });
 
-          // Registrar actividad
-          await fetch('/api/activities', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              type: 'prospect',
-              title: 'Cotización Nueva',
-              subtitle: `Nueva negociación iniciada: ${manualClientName}`,
-              rawDate: new Date().toISOString()
-            })
-          });
+            // Registrar actividad
+            await fetch('/api/activities', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                type: 'prospect',
+                title: 'Cotización Nueva',
+                subtitle: `Nueva negociación iniciada: ${manualClientName}`,
+                rawDate: new Date().toISOString()
+              })
+            });
 
-          showSuccessModal(
-            `📄 Pedido registrado para cliente nuevo.`,
-            true,
-            () => {
-              setQuotingProspect(null);
-              setManualClientName('');
-              setEditingFolio(null);
-              setCart([]);
-              if (typeof refreshData === 'function') refreshData();
-              if (newProspectId && typeof setAutoEditProspectId === 'function') {
-                setAutoEditProspectId(newProspectId);
+            showSuccessModal(
+              `📄 Pedido registrado para ${existingProspect.name}.`,
+              true,
+              () => {
+                setQuotingProspect(null);
+                setManualClientName('');
+                setEditingFolio(null);
+                setCart([]);
+                if (typeof refreshData === 'function') refreshData();
+                if (typeof setAutoEditProspectId === 'function') {
+                  setAutoEditProspectId(existingProspect.id);
+                }
+                onNavigate('Prospectos');
               }
-              onNavigate('Prospectos');
+            );
+          } else {
+            // CREAR NUEVO PROSPECTO AUTOMÁTICAMENTE SI FUE MANUAL Y ES NUEVA COTIZACIÓN
+            const itemsList = cart.map(item => `${item.name} (${item.qty})`).join(', ');
+
+            const pResp = await fetch('/api/prospects', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                name: manualClientName,
+                interest: itemsList.substring(0, 200),
+                budget: cartTotal,
+                stage: 'Negociación',
+                isClient: false,
+                vendedor: user?.name || ''
+              })
+            });
+            let newProspectId = null;
+            try {
+              const createdP = await pResp.json();
+              newProspectId = createdP.id;
+            } catch (err) {
+              console.error('Error parsing created prospect:', err);
             }
-          );
+
+            // Registrar actividad
+            await fetch('/api/activities', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                type: 'prospect',
+                title: 'Cotización Nueva',
+                subtitle: `Nueva negociación iniciada: ${manualClientName}`,
+                rawDate: new Date().toISOString()
+              })
+            });
+
+            showSuccessModal(
+              `📄 Pedido registrado para cliente nuevo.`,
+              true,
+              () => {
+                setQuotingProspect(null);
+                setManualClientName('');
+                setEditingFolio(null);
+                setCart([]);
+                if (typeof refreshData === 'function') refreshData();
+                if (newProspectId && typeof setAutoEditProspectId === 'function') {
+                  setAutoEditProspectId(newProspectId);
+                }
+                onNavigate('Prospectos');
+              }
+            );
+          }
         } else {
           showSuccessModal(`✓ Pedido ${folio} actualizado correctamente.`);
         }
@@ -7534,34 +7602,24 @@ function MainDashboard({ user, setView, prospects, carteraList, backorders, acti
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr', gap: '24px' }}>
         {/* Actividad Reciente */}
         <div className="module-card" style={{ padding: '24px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-            <h3 style={{ fontSize: '1.1rem', fontWeight: 800, margin: 0 }}>Actividad reciente</h3>
-            <button style={{ background: 'none', border: 'none', color: '#3b82f6', fontSize: '0.8rem', fontWeight: 700, cursor: 'pointer' }} onClick={() => setView('Reportes')}>Ver toda la actividad</button>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', position: 'relative' }}>
-            {/* Simple timeline line */}
-            <div style={{ position: 'absolute', left: '19px', top: '20px', bottom: '20px', width: '2px', background: '#f1f5f9' }}></div>
-
-            {(displayActivities || []).slice(0, 4).map((act, i) => (
-              <div key={i} style={{ display: 'flex', gap: '20px', position: 'relative', zIndex: 1 }}>
-                <div style={{ width: '40px', height: '40px', background: '#fff', border: '1px solid #f1f5f9', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}>
-                  {act.type === 'order' && <Package size={16} color="#f97316" />}
-                  {act.type === 'sale' && <CheckCircle2 size={16} color="#10b981" />}
-                  {act.type === 'prospect' && <Users size={16} color="#8b5cf6" />}
-                  {!act.type && <Info size={16} color="#64748b" />}
+          <h3 style={{ fontSize: '1.1rem', fontWeight: 800, margin: '0 0 24px 0' }}>Actividad reciente</h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+            {displayActivities.length > 0 ? displayActivities.map((act, i) => (
+              <div key={i} style={{ display: 'flex', gap: '16px', position: 'relative' }}>
+                {i !== displayActivities.length - 1 && <div style={{ position: 'absolute', left: '19px', top: '40px', bottom: '-24px', width: '2px', background: '#f1f5f9' }}></div>}
+                <div style={{ width: '40px', height: '40px', background: act.type === 'order' ? '#f0fdf4' : '#eff6ff', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, zIndex: 1, border: `2px solid ${act.type === 'order' ? '#dcfce7' : '#dbeafe'}` }}>
+                  {act.type === 'order' ? <Package size={18} color="#10b981" /> : <Users size={18} color="#3b82f6" />}
                 </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                    <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 700, color: '#1e293b' }}>{act.title || act.action}</p>
-                    <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>{act.time || 'Hace poco'}</span>
+                <div>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'baseline' }}>
+                    <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 700, color: '#1e293b' }}>{act.title}</p>
+                    <span style={{ fontSize: '0.7rem', color: '#94a3b8', fontWeight: 600 }}>{act.time}</span>
                   </div>
-                  <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748b' }}>{act.subtitle || act.description}</p>
+                  <p style={{ margin: '4px 0 0 0', fontSize: '0.8rem', color: '#64748b' }}>{act.subtitle}</p>
                 </div>
               </div>
-            ))}
-
-            {(!displayActivities || displayActivities.length === 0) && (
-              <p style={{ textAlign: 'center', color: '#94a3b8', fontSize: '0.85rem', padding: '20px' }}>Sin actividad reciente registrada.</p>
+            )) : (
+              <p style={{ color: '#94a3b8', fontSize: '0.85rem', textAlign: 'center' }}>No hay actividad reciente.</p>
             )}
           </div>
         </div>
@@ -7591,7 +7649,6 @@ function MainDashboard({ user, setView, prospects, carteraList, backorders, acti
           </div>
 
           <div style={{ width: '100%', height: '180px', position: 'relative' }}>
-            {/* Simple SVG Area Chart */}
             <svg width="100%" height="100%" viewBox="0 0 400 100" preserveAspectRatio="none">
               <path d="M0,80 Q20,70 40,75 T80,50 T120,60 T160,30 T200,45 T240,20 T280,35 T320,15 T360,25 T400,10" fill="none" stroke="#10b981" strokeWidth="3" />
               <path d="M0,80 Q20,70 40,75 T80,50 T120,60 T160,30 T200,45 T240,20 T280,35 T320,15 T360,25 T400,10 L400,100 L0,100 Z" fill="url(#salesGrad)" opacity="0.1" />
@@ -7601,31 +7658,88 @@ function MainDashboard({ user, setView, prospects, carteraList, backorders, acti
                   <stop offset="100%" stopColor="transparent" />
                 </linearGradient>
               </defs>
-              {/* Grid lines */}
               {[0, 25, 50, 75, 100].map(v => <line key={v} x1="0" y1={v} x2="400" y2={v} stroke="#f1f5f9" strokeWidth="1" />)}
             </svg>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '12px', color: '#94a3b8', fontSize: '0.7rem', fontWeight: 600 }}>
               <span>1 May</span><span>8 May</span><span>15 May</span><span>22 May</span><span>29 May</span>
             </div>
-            </div>
           </div>
         </div>
+      </div>
+
+      {/* Desempeño de Vendedores (Solo Admin) */}
+      {(user?.role === 'Master' || user?.role === 'Administrador Master' || user?.role === 'admin' || user?.role === 'Admin') && (
+        <div className="module-card" style={{ padding: '24px', marginTop: '24px' }}>
+          <h3 style={{ fontSize: '1.1rem', fontWeight: 800, margin: '0 0 24px 0' }}>Desempeño de Vendedores</h3>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+              <thead>
+                <tr style={{ borderBottom: '2px solid #f1f5f9' }}>
+                  <th style={{ padding: '12px', fontSize: '0.75rem', color: '#64748b', fontWeight: 800, textTransform: 'uppercase' }}>Vendedor</th>
+                  <th style={{ padding: '12px', fontSize: '0.75rem', color: '#64748b', fontWeight: 800, textTransform: 'uppercase' }}>Prospectos</th>
+                  <th style={{ padding: '12px', fontSize: '0.75rem', color: '#64748b', fontWeight: 800, textTransform: 'uppercase' }}>Clientes</th>
+                  <th style={{ padding: '12px', fontSize: '0.75rem', color: '#64748b', fontWeight: 800, textTransform: 'uppercase' }}>Ventas Totales</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Array.from(new Set([...(prospects||[]).map(p => p.vendedor), ...(backorders||[]).map(b => b.vendedor)])).filter(Boolean).map((v, i) => {
+                  const vProps = (prospects||[]).filter(p => p.vendedor === v && !p.isClient).length;
+                  const vClients = (prospects||[]).filter(p => p.vendedor === v && p.isClient).length;
+                  const vBOs = (backorders||[]).filter(b => b.vendedor === v && b.estado !== 'Cotización' && b.estado !== 'Perdido' && b.estado !== 'Cancelado');
+                  const vExpanded = expandOrderItems(vBOs);
+                  const vSales = vExpanded.reduce((sum, it) => sum + ((parseFloat(it.precio) || 0) * (it.pedidoOri || 0)), 0);
+                  return (
+                    <tr key={i} style={{ borderBottom: '1px solid #f8fafc' }}>
+                      <td style={{ padding: '12px', fontSize: '0.85rem', fontWeight: 700, color: '#1e293b' }}>{v}</td>
+                      <td style={{ padding: '12px', fontSize: '0.85rem', color: '#64748b', fontWeight: 600 }}>{vProps}</td>
+                      <td style={{ padding: '12px', fontSize: '0.85rem', color: '#64748b', fontWeight: 600 }}>{vClients}</td>
+                      <td style={{ padding: '12px', fontSize: '0.85rem', color: '#10b981', fontWeight: 800 }}>${vSales.toLocaleString('es-MX')}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       </div>
     </div>
   );
 }
 
-function PersonalModule({ onBack, user }) {
+function PersonalModule({ onBack, user, prospects = [], activities = [], backorders = [] }) {
   const [users, setUsers] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [editingUserId, setEditingUserId] = useState(null);
   const [avatarPreview, setAvatarPreview] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [roleFilter, setRoleFilter] = useState('Todos los roles');
-  const [viewMode, setViewMode] = useState('grid');
   const [formData, setFormData] = useState({
-    name: '', username: '', email: '', password: '1234', phone: '', avatar: '', role: 'Vendedor'
+    name: '', username: '', email: '', password: '1234', phone: '', avatar: '', role: 'Vendedor', status: 'Activo'
   });
+  
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [activeTab, setActiveTab] = useState('Cartera Asignada');
+  const [showTransferModal, setShowTransferModal] = useState(false);
+  const [transferTarget, setTransferTarget] = useState('');
+  const [showDeactivateConfirm, setShowDeactivateConfirm] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
+
+  const fetchUsers = async () => {
+    try {
+      const response = await fetch('/api/users');
+      const data = await response.json();
+      setUsers(data);
+      if (selectedUser) {
+        const updated = data.find(u => u.id === selectedUser.id);
+        if (updated) setSelectedUser(updated);
+      }
+    } catch (e) { console.error(e); }
+  };
+
+  useEffect(() => { fetchUsers(); }, []);
 
   const filteredUsers = users.filter(u => {
     const searchString = searchTerm.toLowerCase();
@@ -7635,16 +7749,6 @@ function PersonalModule({ onBack, user }) {
     const matchRole = roleFilter === 'Todos los roles' || (u.role && u.role.toLowerCase() === roleFilter.toLowerCase());
     return matchSearch && matchRole;
   });
-
-  const fetchUsers = async () => {
-    try {
-      const response = await fetch('/api/users');
-      const data = await response.json();
-      setUsers(data);
-    } catch (e) { console.error(e); }
-  };
-
-  useEffect(() => { fetchUsers(); }, []);
 
   const handleAvatarChange = (e) => {
     const file = e.target.files[0];
@@ -7678,7 +7782,7 @@ function PersonalModule({ onBack, user }) {
         setShowModal(false);
         setEditingUserId(null);
         setAvatarPreview(null);
-        setFormData({ name: '', username: '', email: '', password: '1234', phone: '', avatar: '', role: 'Vendedor' });
+        setFormData({ name: '', username: '', email: '', password: '1234', phone: '', avatar: '', role: 'Vendedor', status: 'Activo' });
         await fetchUsers();
       } else {
         alert(`Error al ${editingUserId ? 'actualizar' : 'registrar'}: ` + (data.error || JSON.stringify(data)));
@@ -7686,6 +7790,47 @@ function PersonalModule({ onBack, user }) {
     } catch (e) {
       console.error('Error de red:', e);
       alert('Error de conexión: ' + e.message);
+    }
+  };
+
+  const handleDeactivate = async () => {
+    if (!selectedUser) return;
+    try {
+      const resp = await fetch(`/api/users/${selectedUser.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'Inactivo' })
+      });
+      if (resp.ok) {
+        setShowDeactivateConfirm(false);
+        await fetchUsers();
+      } else {
+        alert('Error al dar de baja');
+      }
+    } catch (e) {
+      alert('Error de red al dar de baja');
+    }
+  };
+
+  const handleTransfer = async () => {
+    if (!selectedUser || !transferTarget) return;
+    try {
+      const resp = await fetch('/api/users/transfer-portfolio', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fromVendedor: selectedUser.name, toVendedor: transferTarget })
+      });
+      const data = await resp.json();
+      if (resp.ok) {
+        setShowTransferModal(false);
+        setTransferTarget('');
+        setSuccessMessage('Cartera transferida exitosamente. Por favor recarga la página principal si quieres ver los prospectos actualizados globalmente.');
+        setShowSuccessModal(true);
+      } else {
+        alert('Error al transferir cartera: ' + (data.error || 'Error desconocido'));
+      }
+    } catch (e) {
+      alert('Error de red al transferir cartera: ' + e.message);
     }
   };
 
@@ -7698,195 +7843,348 @@ function PersonalModule({ onBack, user }) {
       password: '',
       phone: u.phone || '',
       avatar: u.avatar || '',
-      role: u.role || 'Vendedor'
+      role: u.role || 'Vendedor',
+      status: u.status || 'Activo'
     });
     setAvatarPreview(u.avatar || null);
     setShowModal(true);
   };
 
   const roleStyles = {
-    'Administrador Master': { bg: '#1a2e23', color: '#a7f3d0', border: 'none', px: '10px', py: '4px' },
-    'Administrador': { bg: 'transparent', color: '#3b82f6', border: '1px solid #bfdbfe', px: '10px', py: '3px' },
-    'Vendedor': { bg: 'transparent', color: '#10b981', border: '1px solid #bbf7d0', px: '10px', py: '3px' },
-    'vendedor': { bg: 'transparent', color: '#10b981', border: '1px solid #bbf7d0', px: '10px', py: '3px' },
+    'Administrador Master': { bg: '#1a2e23', color: '#a7f3d0', border: 'none' },
+    'Administrador': { bg: 'transparent', color: '#3b82f6', border: '1px solid #bfdbfe' },
+    'Vendedor': { bg: 'transparent', color: '#10b981', border: '1px solid #bbf7d0' },
+    'vendedor': { bg: 'transparent', color: '#10b981', border: '1px solid #bbf7d0' },
+  };
+
+  const getUserProspects = (userName) => prospects.filter(p => p.vendedor === userName || p.seller === userName);
+  
+  const renderSidebar = () => {
+    if (!selectedUser) {
+      return (
+        <div style={{ flex: '0 0 350px', background: '#fff', borderRadius: '16px', border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8' }}>
+          Selecciona un miembro para ver detalles
+        </div>
+      );
+    }
+    const isInactive = selectedUser.status === 'Inactivo';
+    const userProspects = getUserProspects(selectedUser.name);
+    const clients = userProspects.filter(p => p.isClient);
+    const prospectsOnly = userProspects.filter(p => !p.isClient);
+    const activeSellers = users.filter(u => u.status !== 'Inactivo' && u.id !== selectedUser.id && u.role.toLowerCase() === 'vendedor');
+
+    return (
+      <div style={{ flex: '0 0 380px', background: '#fff', borderRadius: '16px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ padding: '24px', borderBottom: '1px solid #e2e8f0', position: 'relative' }}>
+          <div style={{ display: 'flex', gap: '16px' }}>
+            <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: '#f0fdf4', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0 }}>
+              {selectedUser.avatar ? (
+                <img src={selectedUser.avatar} alt={selectedUser.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              ) : (
+                <span style={{ fontSize: '1.8rem', fontWeight: 800, color: '#10b981' }}>{selectedUser.name?.charAt(0).toUpperCase()}</span>
+              )}
+            </div>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 800, margin: '0 0 4px', color: '#0f172a' }}>{selectedUser.name}</h3>
+                {isInactive && <span style={{ background: '#fee2e2', color: '#ef4444', padding: '2px 8px', borderRadius: '12px', fontSize: '0.65rem', fontWeight: 800 }}>Inactivo</span>}
+              </div>
+              <span style={{ padding: '2px 8px', borderRadius: '12px', fontSize: '0.7rem', fontWeight: 700, background: roleStyles[selectedUser.role]?.bg || '#f1f5f9', color: roleStyles[selectedUser.role]?.color || '#64748b', border: roleStyles[selectedUser.role]?.border }}>{selectedUser.role === 'Administrador Master' ? 'Master' : selectedUser.role}</span>
+              <div style={{ marginTop: '12px', fontSize: '0.85rem', color: '#64748b', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><Mail size={14} /> {selectedUser.email}</div>
+                {selectedUser.phone && <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><Phone size={14} /> {selectedUser.phone}</div>}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><Calendar size={14} /> Ingresó el {new Date(selectedUser.createdAt).toLocaleDateString()}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', borderBottom: '1px solid #e2e8f0', background: '#f8fafc' }}>
+          {['Información', 'Cartera Asignada', 'Actividad', 'Historial'].map(tab => (
+            <button key={tab} onClick={() => setActiveTab(tab)} style={{ flex: 1, padding: '12px 0', border: 'none', background: 'none', fontSize: '0.8rem', fontWeight: activeTab === tab ? 800 : 600, color: activeTab === tab ? '#10b981' : '#64748b', borderBottom: activeTab === tab ? '2px solid #10b981' : '2px solid transparent', cursor: 'pointer' }}>
+              {tab}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ padding: '24px', flex: 1, overflowY: 'auto' }}>
+          {activeTab === 'Cartera Asignada' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div style={{ background: '#f8fafc', padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', color: '#0f172a', fontWeight: 700 }}>
+                  <Users size={16} color="#10b981" /> Clientes asignados ({clients.length})
+                </div>
+                {clients.length > 0 ? (
+                  <ul style={{ margin: 0, paddingLeft: '24px', color: '#475569', fontSize: '0.85rem' }}>
+                    {clients.slice(0, 5).map(c => <li key={c.id} style={{ marginBottom: '4px' }}>{c.name}</li>)}
+                    {clients.length > 5 && <li>... y {clients.length - 5} más</li>}
+                  </ul>
+                ) : <span style={{ fontSize: '0.85rem', color: '#94a3b8' }}>No hay clientes asignados</span>}
+              </div>
+
+              <div style={{ background: '#f8fafc', padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', color: '#0f172a', fontWeight: 700 }}>
+                  <Filter size={16} color="#10b981" /> Prospectos asignados ({prospectsOnly.length})
+                </div>
+                {prospectsOnly.length > 0 ? (
+                  <ul style={{ margin: 0, paddingLeft: '24px', color: '#475569', fontSize: '0.85rem' }}>
+                    {prospectsOnly.slice(0, 5).map(c => <li key={c.id} style={{ marginBottom: '4px' }}>{c.name}</li>)}
+                    {prospectsOnly.length > 5 && <li>... y {prospectsOnly.length - 5} más</li>}
+                  </ul>
+                ) : <span style={{ fontSize: '0.85rem', color: '#94a3b8' }}>No hay prospectos asignados</span>}
+              </div>
+
+              {!isInactive && userProspects.length > 0 && (
+                <div style={{ marginTop: '16px', borderTop: '1px dashed #cbd5e1', paddingTop: '16px' }}>
+                  <h4 style={{ fontSize: '0.9rem', color: '#0f172a', margin: '0 0 8px' }}>Transferir cartera</h4>
+                  <p style={{ fontSize: '0.75rem', color: '#64748b', margin: '0 0 12px' }}>Transfiere los clientes y prospectos asignados a otro vendedor.</p>
+                  <button onClick={() => setShowTransferModal(true)} style={{ width: '100%', background: '#fff', border: '1px solid #10b981', color: '#10b981', padding: '10px', borderRadius: '8px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                    <ArrowRight size={16} /> Transferir
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+          {activeTab === 'Información' && (
+             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div style={{ background: '#f8fafc', padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                  <h4 style={{ fontSize: '0.9rem', color: '#0f172a', margin: '0 0 12px' }}>Datos de la Cuenta</h4>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '0.85rem' }}>
+                    <div>
+                      <span style={{ color: '#94a3b8', display: 'block', fontSize: '0.75rem' }}>ID</span>
+                      <span style={{ color: '#1e293b', fontWeight: 600 }}>#{selectedUser.id}</span>
+                    </div>
+                    <div>
+                      <span style={{ color: '#94a3b8', display: 'block', fontSize: '0.75rem' }}>Username</span>
+                      <span style={{ color: '#1e293b', fontWeight: 600 }}>{selectedUser.username ? `@${selectedUser.username}` : 'No definido'}</span>
+                    </div>
+                    <div>
+                      <span style={{ color: '#94a3b8', display: 'block', fontSize: '0.75rem' }}>Estado</span>
+                      <span style={{ color: selectedUser.status === 'Inactivo' ? '#ef4444' : '#10b981', fontWeight: 600 }}>{selectedUser.status}</span>
+                    </div>
+                  </div>
+                </div>
+                <div style={{ background: '#f8fafc', padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                  <h4 style={{ fontSize: '0.9rem', color: '#0f172a', margin: '0 0 12px' }}>Resumen Comercial</h4>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '0.85rem' }}>
+                    <div>
+                      <span style={{ color: '#94a3b8', display: 'block', fontSize: '0.75rem' }}>Total Clientes</span>
+                      <span style={{ color: '#1e293b', fontWeight: 600 }}>{clients.length}</span>
+                    </div>
+                    <div>
+                      <span style={{ color: '#94a3b8', display: 'block', fontSize: '0.75rem' }}>Total Prospectos</span>
+                      <span style={{ color: '#1e293b', fontWeight: 600 }}>{prospectsOnly.length}</span>
+                    </div>
+                  </div>
+                </div>
+             </div>
+          )}
+          {activeTab === 'Actividad' && (() => {
+             const userActivities = activities.filter(a => a.vendedor === selectedUser.name).sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
+             return (
+               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                 {userActivities.length > 0 ? userActivities.slice(0, 10).map(act => (
+                   <div key={act.id} style={{ background: '#f8fafc', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '0.85rem' }}>
+                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                       <span style={{ fontWeight: 700, color: '#0f172a' }}>{act.client}</span>
+                       <span style={{ color: '#94a3b8', fontSize: '0.75rem' }}>{act.date}</span>
+                     </div>
+                     <div style={{ color: '#64748b' }}>{act.description}</div>
+                     <div style={{ marginTop: '6px', fontSize: '0.75rem', fontWeight: 600, color: act.status === 'Completada' ? '#10b981' : '#f59e0b' }}>{act.status}</div>
+                   </div>
+                 )) : <div style={{ color: '#94a3b8', fontSize: '0.85rem' }}>No hay actividades recientes registradas.</div>}
+               </div>
+             );
+          })()}
+          {activeTab === 'Historial' && (() => {
+             const userBackorders = backorders.filter(b => b.vendedor === selectedUser.name).sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
+             return (
+               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                 {userBackorders.length > 0 ? userBackorders.slice(0, 10).map(b => (
+                   <div key={b.id} style={{ background: '#f8fafc', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '0.85rem' }}>
+                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                       <span style={{ fontWeight: 700, color: '#0f172a' }}>{b.cliente}</span>
+                       <span style={{ color: '#94a3b8', fontSize: '0.75rem' }}>{new Date(b.createdAt).toLocaleDateString()}</span>
+                     </div>
+                     <div style={{ color: '#64748b' }}>{b.producto} - {b.cantidad} un.</div>
+                     <div style={{ marginTop: '6px', display: 'flex', justifyContent: 'space-between' }}>
+                       <span style={{ fontWeight: 700, color: '#10b981' }}>${(b.precio * b.cantidad).toLocaleString('es-MX')}</span>
+                       <span style={{ fontSize: '0.75rem', fontWeight: 600, color: '#3b82f6' }}>{b.estado}</span>
+                     </div>
+                   </div>
+                 )) : <div style={{ color: '#94a3b8', fontSize: '0.85rem' }}>No hay historial de pedidos/ventas.</div>}
+               </div>
+             );
+          })()}
+        </div>
+      </div>
+    );
   };
 
   return (
     <div className="module-container" style={{ background: '#f8fafc', minHeight: '100vh' }}>
       <ViewHeader 
         title="Gestión de Personal" 
-        subtitle="Administra los miembros de tu equipo y sus roles en la plataforma." 
+        subtitle="Administra los miembros de tu equipo, roles y carteras en la plataforma." 
         icon={Users} 
         onBack={onBack}
       >
-        <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
-          {[
-            { label: 'Miembros', val: users.length, icon: Users, color: '#10b981', bg: '#f0fdf4' },
-            { label: 'Vendedores', val: users.filter(u => u.role.toLowerCase() === 'vendedor').length, icon: ShieldAlert, color: '#10b981', bg: '#f0fdf4' },
-            { label: 'Administradores', val: users.filter(u => u.role.toLowerCase().includes('administrador')).length, icon: Settings, color: '#3b82f6', bg: '#eff6ff' }
-          ].map((stat, i) => (
-            <div key={i} style={{ background: '#fff', padding: '12px 20px', borderRadius: '16px', border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: '14px', minWidth: '160px' }}>
-              <div style={{ background: stat.bg, padding: '8px', borderRadius: '10px' }}>
-                <stat.icon size={18} color={stat.color} />
-              </div>
-              <div>
-                <p style={{ color: '#64748b', fontSize: '0.7rem', fontWeight: 700, margin: 0, textTransform: 'uppercase' }}>{stat.label}</p>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
-                  <span style={{ fontSize: '1.2rem', fontWeight: 800, color: '#0f172a' }}>{stat.val}</span>
-                </div>
-              </div>
-            </div>
-          ))}
-          <button
-            className="btn-primary"
-            onClick={() => {
-              setEditingUserId(null);
-              setFormData({ name: '', username: '', email: '', password: '1234', phone: '', avatar: '', role: 'Vendedor' });
-              setAvatarPreview(null);
-              setShowModal(true);
-            }}
-            style={{ background: '#2d5a3f', borderRadius: '12px', padding: '12px 24px', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, border: 'none', color: '#fff', cursor: 'pointer', boxShadow: '0 4px 12px rgba(45, 90, 63, 0.2)', marginLeft: '12px' }}
-          >
-            <Plus size={18} /> Nuevo Miembro
-          </button>
-        </div>
+        <button
+          className="btn-primary"
+          onClick={() => {
+            setEditingUserId(null);
+            setFormData({ name: '', username: '', email: '', password: '1234', phone: '', avatar: '', role: 'Vendedor', status: 'Activo' });
+            setAvatarPreview(null);
+            setShowModal(true);
+          }}
+          style={{ background: '#2d5a3f', borderRadius: '12px', padding: '12px 24px', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, border: 'none', color: '#fff', cursor: 'pointer', boxShadow: '0 4px 12px rgba(45, 90, 63, 0.2)' }}
+        >
+          <Plus size={18} /> Nuevo Miembro
+        </button>
       </ViewHeader>
 
-      <div style={{ maxWidth: '1400px', margin: '0 auto', padding: '16px 40px 32px 40px' }}>
-        {/* Toolbar */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-          {/* Search */}
-          <div style={{ position: 'relative', flex: 1, marginRight: '32px' }}>
-            <Search size={18} color="#94a3b8" style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)' }} />
-            <input
-              type="text"
-              placeholder="Buscar miembros..."
-              value={searchTerm}
-              onChange={e => setSearchTerm(e.target.value)}
-              style={{ width: '100%', padding: '12px 16px 12px 44px', borderRadius: '12px', border: '1px solid #e2e8f0', outline: 'none', color: '#1e293b', fontSize: '0.95rem', boxShadow: '0 1px 2px 0 rgba(0,0,0,0.02)' }}
-            />
-          </div>
-
-          {/* Filters & Toggles */}
-          <div style={{ display: 'flex', gap: '16px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '8px 16px', gap: '8px', cursor: 'pointer', background: '#fff', boxShadow: '0 1px 2px 0 rgba(0,0,0,0.02)', position: 'relative' }}>
-              <Filter size={16} color="#10b981" />
-              <select
-                value={roleFilter}
-                onChange={e => setRoleFilter(e.target.value)}
-                style={{ fontSize: '0.9rem', color: '#64748b', fontWeight: 500, border: 'none', outline: 'none', background: 'transparent', cursor: 'pointer', appearance: 'none', paddingRight: '12px' }}
-              >
-                <option value="Todos los roles">Todos los roles</option>
-                <option value="Administrador Master">Administrador Master</option>
-                <option value="Administrador">Administrador</option>
-                <option value="Vendedor">Vendedor</option>
-              </select>
-              <ChevronDown size={16} color="#94a3b8" style={{ pointerEvents: 'none', position: 'absolute', right: '12px' }} />
+      <div style={{ maxWidth: '1400px', margin: '0 auto', padding: '16px 40px 32px 40px', display: 'flex', gap: '24px', height: 'calc(100vh - 120px)' }}>
+        
+        {/* Main Content (Table) */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          {/* Toolbar */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+            <div style={{ position: 'relative', flex: 1, maxWidth: '400px' }}>
+              <Search size={18} color="#94a3b8" style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)' }} />
+              <input type="text" placeholder="Buscar miembros..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} style={{ width: '100%', padding: '12px 16px 12px 44px', borderRadius: '12px', border: '1px solid #e2e8f0', outline: 'none', color: '#1e293b', fontSize: '0.95rem' }} />
             </div>
 
-            <div style={{ display: 'flex', background: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '4px' }}>
-              <button onClick={() => setViewMode('grid')} style={{ padding: '8px', borderRadius: '8px', border: 'none', background: viewMode === 'grid' ? '#f0fdf4' : 'transparent', color: viewMode === 'grid' ? '#10b981' : '#94a3b8', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><LayoutGrid size={18} /></button>
-              <button onClick={() => setViewMode('list')} style={{ padding: '8px', borderRadius: '8px', border: 'none', background: viewMode === 'list' ? '#f0fdf4' : 'transparent', color: viewMode === 'list' ? '#10b981' : '#94a3b8', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><ClipboardList size={18} /></button>
-            </div>
-          </div>
-        </div>
-
-        {/* Tarjetas de usuarios */}
-        <div style={{ display: 'grid', gridTemplateColumns: viewMode === 'grid' ? 'repeat(3, 1fr)' : '1fr', gap: '24px' }}>
-          {filteredUsers.map(u => {
-            const rs = roleStyles[u.role] || roleStyles['vendedor'];
-            return (
-              <div key={u.id} className="module-card" style={{ padding: '24px', background: '#fff', borderRadius: '16px', border: '1px solid #f1f5f9', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)', display: 'flex', flexDirection: viewMode === 'list' ? 'row' : 'column', gap: viewMode === 'list' ? '32px' : '16px', transition: 'transform 0.2s, box-shadow 0.2s', position: 'relative', alignItems: viewMode === 'list' ? 'center' : 'stretch' }}
-                onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-4px)'; e.currentTarget.style.boxShadow = '0 12px 24px -10px rgba(0,0,0,0.08)'; }}
-                onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0,0,0,0.02)'; }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flex: viewMode === 'list' ? '1' : 'none' }}>
-                  {/* Avatar */}
-                  <div style={{ width: '54px', height: '54px', borderRadius: '50%', background: '#f0fdf4', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0 }}>
-                    {u.avatar
-                      ? <img src={u.avatar} alt={u.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                      : <span style={{ fontSize: '1.6rem', fontWeight: 800, color: '#10b981' }}>{u.name?.charAt(0).toUpperCase()}</span>
-                    }
-                  </div>
-
-                  {/* Info & Badge */}
-                  <div style={{ flex: 1, minWidth: 0, paddingRight: viewMode === 'list' ? '0' : '20px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: viewMode === 'list' ? 'center' : 'flex-start', gap: '8px', marginBottom: viewMode === 'list' ? '0' : '4px' }}>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <h3 style={{ fontSize: '1.05rem', fontWeight: 800, margin: '0 0 2px', color: '#0f172a', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', minHeight: viewMode === 'list' ? 'auto' : '2.6rem', lineHeight: '1.25' }}>{u.name}</h3>
-                        {u.username && <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748b', fontWeight: 500 }}>@{u.username}</p>}
-                      </div>
-                      {viewMode === 'grid' && (
-                        <span style={{
-                          padding: `${rs.py || '4px'} ${rs.px || '10px'}`,
-                          borderRadius: '20px',
-                          fontSize: '0.7rem',
-                          fontWeight: 800,
-                          background: rs.bg,
-                          color: rs.color,
-                          border: rs.border || 'none',
-                          whiteSpace: 'nowrap',
-                          flexShrink: 0
-                        }}>
-                          {u.role}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {viewMode === 'list' && (
-                  <div style={{ flex: '0.5', display: 'flex', justifyContent: 'center' }}>
-                    <span style={{
-                      padding: `${rs.py || '4px'} ${rs.px || '10px'}`,
-                      borderRadius: '20px',
-                      fontSize: '0.75rem',
-                      fontWeight: 800,
-                      background: rs.bg,
-                      color: rs.color,
-                      border: rs.border || 'none',
-                      whiteSpace: 'nowrap'
-                    }}>
-                      {u.role}
-                    </span>
-                  </div>
-                )}
-
-                {/* Details */}
-                <div style={{ display: 'flex', flexDirection: viewMode === 'list' ? 'row' : 'column', gap: viewMode === 'list' ? '24px' : '8px', paddingTop: viewMode === 'list' ? '0' : '4px', flex: viewMode === 'list' ? '1.5' : 'none', justifyContent: viewMode === 'list' ? 'space-between' : 'flex-start', paddingRight: viewMode === 'list' ? '40px' : '0' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#64748b', fontSize: '0.85rem' }}>
-                    <Mail size={14} color="#10b981" />
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.email}</span>
-                  </div>
-                  {u.phone && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#64748b', fontSize: '0.85rem' }}>
-                      <Phone size={14} color="#10b981" />
-                      <span>{u.phone}</span>
-                    </div>
-                  )}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#94a3b8', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
-                    <Calendar size={14} color="#10b981" />
-                    <span>Ingresó el {new Date(u.createdAt).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
-                  </div>
-                </div>
-
-                {/* Edit Action */}
-                <button
-                  onClick={() => openEditModal(u)}
-                  style={{ position: 'absolute', top: viewMode === 'list' ? '50%' : '16px', right: '16px', transform: viewMode === 'list' ? 'translateY(-50%)' : 'none', background: 'none', border: 'none', cursor: 'pointer', padding: '4px', color: '#94a3b8', transition: 'color 0.2s' }}
-                  onMouseEnter={e => e.currentTarget.style.color = '#10b981'}
-                  onMouseLeave={e => e.currentTarget.style.color = '#94a3b8'}
-                  title="Editar perfil"
-                >
-                  <MoreVertical size={18} />
-                </button>
+            <div style={{ display: 'flex', gap: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '8px 16px', gap: '8px', background: '#fff' }}>
+                <Filter size={16} color="#10b981" />
+                <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)} style={{ fontSize: '0.9rem', color: '#64748b', fontWeight: 500, border: 'none', outline: 'none', background: 'transparent' }}>
+                  <option value="Todos los roles">Todos los roles</option>
+                  <option value="Administrador Master">Master</option>
+                  <option value="Administrador">Administrador</option>
+                  <option value="Vendedor">Vendedor</option>
+                </select>
               </div>
-            );
-          })}
+            </div>
+          </div>
+
+          {/* Table */}
+          <div style={{ background: '#fff', borderRadius: '16px', border: '1px solid #e2e8f0', flex: 1, overflowY: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+              <thead style={{ position: 'sticky', top: 0, background: '#f8fafc', zIndex: 1, boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
+                <tr>
+                  <th style={{ padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', letterSpacing: '0.05em' }}>MIEMBRO</th>
+                  <th style={{ padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', letterSpacing: '0.05em' }}>ROL</th>
+                  <th style={{ padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', letterSpacing: '0.05em' }}>ESTADO</th>
+                  <th style={{ padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', letterSpacing: '0.05em' }}>FECHA DE INGRESO</th>
+                  <th style={{ padding: '16px 24px', fontSize: '0.75rem', fontWeight: 800, color: '#64748b', letterSpacing: '0.05em', textAlign: 'right' }}>ACCIONES</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredUsers.map(u => {
+                  const isSelected = selectedUser?.id === u.id;
+                  const isInactive = u.status === 'Inactivo';
+                  return (
+                    <tr key={u.id} onClick={() => setSelectedUser(u)} style={{ borderBottom: '1px solid #f1f5f9', cursor: 'pointer', background: isSelected ? '#f0fdf4' : 'transparent', transition: 'background 0.2s' }} onMouseEnter={e => { if(!isSelected) e.currentTarget.style.background = '#f8fafc' }} onMouseLeave={e => { if(!isSelected) e.currentTarget.style.background = 'transparent' }}>
+                      <td style={{ padding: '16px 24px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                          <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: '#e2e8f0', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            {u.avatar ? <img src={u.avatar} alt={u.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ color: '#64748b', fontWeight: 800 }}>{u.name?.charAt(0).toUpperCase()}</span>}
+                          </div>
+                          <div>
+                            <div style={{ fontWeight: 700, color: '#0f172a', fontSize: '0.9rem' }}>{u.name}</div>
+                            <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{u.email}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td style={{ padding: '16px 24px' }}>
+                        <span style={{ padding: '4px 10px', borderRadius: '12px', fontSize: '0.7rem', fontWeight: 700, background: roleStyles[u.role]?.bg || '#f1f5f9', color: roleStyles[u.role]?.color || '#64748b', border: roleStyles[u.role]?.border }}>{u.role === 'Administrador Master' ? 'Master' : u.role}</span>
+                      </td>
+                      <td style={{ padding: '16px 24px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', fontWeight: 600, color: isInactive ? '#ef4444' : '#10b981' }}>
+                          <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: isInactive ? '#ef4444' : '#10b981' }} />
+                          {isInactive ? 'Inactivo (Baja)' : 'Activo'}
+                        </div>
+                      </td>
+                      <td style={{ padding: '16px 24px', fontSize: '0.85rem', color: '#64748b' }}>
+                        {new Date(u.createdAt).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })}
+                      </td>
+                      <td style={{ padding: '16px 24px', textAlign: 'right' }}>
+                        <div style={{ display: 'inline-flex', gap: '8px', marginLeft: '12px' }}>
+                          <button onClick={(e) => { e.stopPropagation(); openEditModal(u); }} style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer' }}><Edit2 size={14} /></button>
+                          {!isInactive && <button onClick={(e) => { e.stopPropagation(); setSelectedUser(u); setShowDeactivateConfirm(true); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }} title="Dar de baja"><Trash2 size={14} /></button>}
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
+
+        {/* Sidebar */}
+        {renderSidebar()}
       </div>
 
-      {/* Modal de Registro */}
+      {/* Transfer Modal */}
+      {showTransferModal && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '400px' }}>
+            <h3 style={{ fontSize: '1.2rem', margin: '0 0 16px', color: '#0f172a' }}>Transferir cartera de {selectedUser?.name}</h3>
+            <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '24px' }}>Selecciona a qué vendedor se le asignarán los clientes, prospectos y cobranza activa.</p>
+            <select value={transferTarget} onChange={e => setTransferTarget(e.target.value)} style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #cbd5e1', marginBottom: '24px', outline: 'none' }}>
+              <option value="">Selecciona un vendedor...</option>
+              {users.filter(u => u.status !== 'Inactivo' && u.id !== selectedUser?.id && u.role.toLowerCase() === 'vendedor').map(v => (
+                <option key={v.id} value={v.name}>{v.name}</option>
+              ))}
+            </select>
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <button onClick={() => setShowTransferModal(false)} className="btn-secondary" style={{ flex: 1, padding: '10px' }}>Cancelar</button>
+              <button onClick={handleTransfer} className="btn-primary" disabled={!transferTarget} style={{ flex: 1, padding: '10px', background: transferTarget ? '#10b981' : '#94a3b8', border: 'none', color: '#fff', borderRadius: '8px', cursor: transferTarget ? 'pointer' : 'not-allowed' }}>Transferir</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Deactivate Modal */}
+      {showDeactivateConfirm && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '400px', textAlign: 'center' }}>
+            <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: '#fee2e2', color: '#ef4444', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+              <AlertCircle size={32} />
+            </div>
+            <h3 style={{ fontSize: '1.2rem', margin: '0 0 12px', color: '#0f172a' }}>¿Dar de baja a {selectedUser?.name}?</h3>
+            <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '24px', lineHeight: 1.5 }}>
+              El usuario ya no podrá iniciar sesión en la plataforma. Sin embargo, su historial de ventas, pedidos y facturas se mantendrá intacto.<br/><br/>
+              Si tiene prospectos o clientes, te sugerimos transferir su cartera a otro vendedor antes de darlo de baja.
+            </p>
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <button onClick={() => setShowDeactivateConfirm(false)} className="btn-secondary" style={{ flex: 1, padding: '10px' }}>Cancelar</button>
+              <button onClick={handleDeactivate} style={{ flex: 1, padding: '10px', background: '#ef4444', border: 'none', color: '#fff', borderRadius: '8px', cursor: 'pointer', fontWeight: 700 }}>Confirmar Baja</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Success Modal */}
+      {showSuccessModal && (
+        <div className="modal-overlay" style={{ zIndex: 1100 }}>
+          <div className="modal-content" style={{ maxWidth: '400px', textAlign: 'center', padding: '32px 24px' }}>
+            <div style={{ width: '72px', height: '72px', borderRadius: '50%', background: '#dcfce7', color: '#22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px', boxShadow: '0 4px 12px rgba(34, 197, 94, 0.2)' }}>
+              <CheckCircle2 size={40} />
+            </div>
+            <h3 style={{ fontSize: '1.4rem', fontWeight: 700, margin: '0 0 12px', color: '#0f172a' }}>¡Éxito!</h3>
+            <p style={{ fontSize: '0.95rem', color: '#475569', marginBottom: '28px', lineHeight: 1.6 }}>
+              {successMessage}
+            </p>
+            <button onClick={() => setShowSuccessModal(false)} className="btn-primary" style={{ width: '100%', padding: '12px', background: '#22c55e', border: 'none', color: '#fff', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '1rem', boxShadow: '0 4px 6px -1px rgba(34, 197, 94, 0.1), 0 2px 4px -1px rgba(34, 197, 94, 0.06)' }}>
+              Aceptar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Registro/Edición */}
       {showModal && (
         <div className="modal-overlay">
           <div className="modal-content" style={{ maxWidth: '520px', borderRadius: '24px' }}>
@@ -7903,10 +8201,7 @@ function PersonalModule({ onBack, user }) {
               {/* Avatar Upload */}
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '24px' }}>
                 <label htmlFor="avatar-upload" style={{ cursor: 'pointer' }}>
-                  <div style={{ width: '96px', height: '96px', borderRadius: '50%', border: '3px dashed #cbd5e1', background: '#f8fafc', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', transition: 'border-color 0.2s' }}
-                    onMouseEnter={e => e.currentTarget.style.borderColor = '#2d5a3f'}
-                    onMouseLeave={e => e.currentTarget.style.borderColor = '#cbd5e1'}
-                  >
+                  <div style={{ width: '96px', height: '96px', borderRadius: '50%', border: '3px dashed #cbd5e1', background: '#f8fafc', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', transition: 'border-color 0.2s' }}>
                     {avatarPreview
                       ? <img src={avatarPreview} alt="preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                       : <div style={{ textAlign: 'center', color: '#94a3b8' }}>
@@ -7917,28 +8212,27 @@ function PersonalModule({ onBack, user }) {
                   </div>
                 </label>
                 <input id="avatar-upload" type="file" accept="image/*" onChange={handleAvatarChange} style={{ display: 'none' }} />
-                <p style={{ fontSize: '0.78rem', color: '#94a3b8', marginTop: '8px' }}>Haz clic para subir foto de perfil</p>
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                 <div className="form-group" style={{ gridColumn: '1 / -1' }}>
                   <label>Nombre Completo *</label>
-                  <input type="text" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} className="search-input" style={{ width: '100%' }} placeholder="Ej. Juan Pérez García" required />
+                  <input type="text" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} className="search-input" style={{ width: '100%' }} required />
                 </div>
                 <div className="form-group">
                   <label>Nombre de Usuario <span style={{ color: '#94a3b8', fontWeight: 400 }}>(opcional)</span></label>
-                  <input type="text" value={formData.username} onChange={e => setFormData({ ...formData, username: e.target.value })} className="search-input" style={{ width: '100%' }} placeholder="@jperez" />
+                  <input type="text" value={formData.username} onChange={e => setFormData({ ...formData, username: e.target.value })} className="search-input" style={{ width: '100%' }} />
                 </div>
                 <div className="form-group">
                   <label>Teléfono</label>
-                  <input type="tel" value={formData.phone} onChange={e => setFormData({ ...formData, phone: e.target.value })} className="search-input" style={{ width: '100%' }} placeholder="Ej. 612 123 4567" />
+                  <input type="tel" value={formData.phone} onChange={e => setFormData({ ...formData, phone: e.target.value })} className="search-input" style={{ width: '100%' }} />
                 </div>
                 <div className="form-group" style={{ gridColumn: '1 / -1' }}>
                   <label>Correo Electrónico *</label>
-                  <input type="email" value={formData.email} onChange={e => setFormData({ ...formData, email: e.target.value })} className="search-input" style={{ width: '100%' }} placeholder="correo@agriflow.com" required />
+                  <input type="email" value={formData.email} onChange={e => setFormData({ ...formData, email: e.target.value })} className="search-input" style={{ width: '100%' }} required />
                 </div>
                 <div className="form-group">
-                  <label>{editingUserId ? 'Nueva Contraseña (opcional)' : 'Contraseña Inicial'}</label>
+                  <label>{editingUserId ? 'Nueva Contraseña' : 'Contraseña Inicial'}</label>
                   <input type="text" value={formData.password} onChange={e => setFormData({ ...formData, password: e.target.value })} className="search-input" style={{ width: '100%' }} />
                 </div>
                 <div className="form-group">
@@ -7946,7 +8240,7 @@ function PersonalModule({ onBack, user }) {
                   <select className="select-input" style={{ width: '100%' }} value={formData.role} onChange={e => setFormData({ ...formData, role: e.target.value })}>
                     <option value="Vendedor">Vendedor</option>
                     <option value="Administrador">Administrador</option>
-                    <option value="Administrador Master">Administrador Master</option>
+                    <option value="Administrador Master">Master</option>
                   </select>
                 </div>
               </div>
@@ -8892,19 +9186,34 @@ function App() {
       }));
 
       const [v, c, b, a, p, pr] = results;
+      
+      let v_data = Array.isArray(v) ? v : [];
+      let c_data = Array.isArray(c) ? c : [];
+      let b_data = Array.isArray(b) ? b : [];
+      let a_data = Array.isArray(a) ? a : [];
+      let p_data = Array.isArray(p) ? p : [];
+      
+      if (user?.role?.toLowerCase() === 'vendedor') {
+        c_data = c_data.filter(item => item.seller === user.name);
+        b_data = b_data.filter(item => item.vendedor === user.name);
+        a_data = a_data.filter(item => item.vendedor === user.name || item.user === user.name);
+        p_data = p_data.filter(item => item.vendedor === user.name);
+        v_data = v_data.filter(item => item.name === user.name);
+      }
+
       console.log('Data fetched successfully:', {
-        ventas: v.length,
-        cartera: c.length,
-        backorders: b.length,
-        prospects: p.length,
+        ventas: v_data.length,
+        cartera: c_data.length,
+        backorders: b_data.length,
+        prospects: p_data.length,
         products: pr.length
       });
 
-      setSellers(Array.isArray(v) ? v : []);
-      setCarteraList(Array.isArray(c) ? c : []);
-      setBackorders(Array.isArray(b) ? b : []);
-      setActivities(Array.isArray(a) ? a : []);
-      setProspects(Array.isArray(p) ? p : []);
+      setSellers(v_data);
+      setCarteraList(c_data);
+      setBackorders(b_data);
+      setActivities(a_data);
+      setProspects(p_data);
       setProducts(Array.isArray(pr) ? pr : []);
     } catch (err) { console.error('Error sincronizando datos globales:', err); }
   };
@@ -9088,6 +9397,7 @@ function App() {
         title="Pedidos"
         products={products}
         prospects={prospects}
+        backorders={backorders}
       />;
       case 'Backorders': return <BackordersModule
         onBack={() => setView('Dashboard')}
@@ -9098,6 +9408,7 @@ function App() {
         title="Backorders"
         products={products}
         prospects={prospects}
+        backorders={backorders}
       />;
       case 'Facturacion': return <FacturacionModule onBack={() => setView('Dashboard')} backorders={backorders} refreshData={refreshAllData} />
       case 'Logistica': return <LogisticaModule
@@ -9110,8 +9421,8 @@ function App() {
       case 'Inventario': return <CotizadorModule onBack={() => setView('Dashboard')} onNavigate={setView} products={products} setProducts={setProducts} refreshAllData={refreshAllData} user={user} />;
       case 'KPIs': return <KpisModule onBack={() => setView('Dashboard')} sellers={sellers} setSellers={setSellers} refreshSellers={refreshAllData} prospects={prospects} backorders={backorders} carteraList={carteraList} user={user} products={products} onNavigate={setView} handleDeliver={handleDeliver} />;
       case 'Ventas': return <VentasModule onBack={() => setView('Dashboard')} onNavigate={handleNavigateWithData} setQuotingProspect={setQuotingProspect} user={user} backorders={backorders} carteraList={carteraList} prospects={prospects} refreshData={refreshAllData} initialPipelineType={previousView === 'Ventas' ? previousMode : 'prospects'} />;
-      case 'Prospectos': return <ProspectosModule onBack={() => setView('Dashboard')} prospects={prospects} setProspects={setProspects} refreshProspects={refreshAllData} onNavigate={(v, n) => handleNavigateWithData(v, n, 'prospects')} mode="prospects" autoEditProspectId={autoEditProspectId} setAutoEditProspectId={setAutoEditProspectId} backorders={backorders} />;
-      case 'Clientes': return <ProspectosModule onBack={() => setView('Dashboard')} prospects={prospects} setProspects={setProspects} refreshProspects={refreshAllData} onNavigate={(v, n) => handleNavigateWithData(v, n, 'clients')} mode="clients" autoEditProspectId={autoEditProspectId} setAutoEditProspectId={setAutoEditProspectId} backorders={backorders} />;
+      case 'Prospectos': return <ProspectosModule onBack={() => setView('Dashboard')} prospects={prospects} setProspects={setProspects} refreshProspects={refreshAllData} onNavigate={(v, n) => handleNavigateWithData(v, n, 'prospects')} mode="prospects" autoEditProspectId={autoEditProspectId} setAutoEditProspectId={setAutoEditProspectId} backorders={backorders} user={user} />;
+      case 'Clientes': return <ProspectosModule onBack={() => setView('Dashboard')} prospects={prospects} setProspects={setProspects} refreshProspects={refreshAllData} onNavigate={(v, n) => handleNavigateWithData(v, n, 'clients')} mode="clients" autoEditProspectId={autoEditProspectId} setAutoEditProspectId={setAutoEditProspectId} backorders={backorders} user={user} />;
       case 'Cartera': return <CarteraModule onBack={() => setView('Dashboard')} carteraList={carteraList} backorders={backorders} setCarteraList={setCarteraList} refreshCartera={refreshAllData} />;
       case 'Reportes': return <ReportesModule onBack={() => setView('Dashboard')} sellers={sellers} carteraList={carteraList} backorders={backorders} activities={activities} prospects={prospects} products={products} />;
       case 'Cotizador': return <ProductosModule
@@ -9139,7 +9450,7 @@ function App() {
         setEditingFolio={setEditingFolio}
         setAutoEditProspectId={setAutoEditProspectId}
       />;
-       case 'Personal': return <PersonalModule onBack={() => setView('Dashboard')} user={user} />;
+       case 'Personal': return <PersonalModule onBack={() => setView('Dashboard')} user={user} prospects={prospects} activities={activities} backorders={backorders} />;
       case 'CentroControl':
         return (user?.role === 'Master' || user?.role === 'Administrador Master' || user?.role === 'Admin' || user?.role === 'admin' || user?.role === 'Administrador') ? (
           <CentroControlModule onBack={() => setView('Dashboard')} user={user} activities={activities} backorders={backorders} prospects={prospects} />
@@ -9176,52 +9487,76 @@ function App() {
         <nav className="sidebar-nav" style={{ overflowY: 'auto', paddingRight: '4px' }}>
           <SidebarItem icon={Home} label="Dashboard" active={view === 'Dashboard'} onClick={() => setView('Dashboard')} />
           
-          {(user?.role === 'Master' || user?.role === 'Administrador Master' || user?.role === 'Admin' || user?.role === 'admin' || user?.role === 'Administrador') && (
-            <SidebarItem icon={ShieldAlert} label="Centro de Control" active={view === 'CentroControl'} onClick={() => setView('CentroControl')} />
-          )}
 
-          <SidebarSection title="OPERACIÓN" isOpen={operacionOpen} onToggle={() => setOperacionOpen(!operacionOpen)} />
-          {operacionOpen && (
+          {user?.role?.toLowerCase() === 'vendedor' ? (
             <>
-              {user?.role !== 'Vendedor' && user?.role !== 'vendedor' && (
-                <SidebarItem icon={Package} label="Inventario" active={view === 'Inventario'} onClick={() => setView('Inventario')} />
+              <SidebarSection title="VENTAS" isOpen={operacionOpen} onToggle={() => setOperacionOpen(!operacionOpen)} />
+              {operacionOpen && (
+                <>
+                  <SidebarItem icon={Users} label="Prospectos" active={view === 'Prospectos'} onClick={() => setView('Prospectos')} />
+                  <SidebarItem icon={DollarSign} label="Pipeline de Ventas" active={view === 'Ventas'} onClick={() => setView('Ventas')} />
+                  <SidebarItem icon={Users} label="Clientes" active={view === 'Clientes'} onClick={() => setView('Clientes')} />
+                  <SidebarItem icon={FileText} label="Cotizador" active={view === 'Cotizador'} onClick={() => setView('Cotizador')} />
+                  <SidebarItem icon={ClipboardList} label="Pedidos" active={view === 'Pedidos'} onClick={() => setView('Pedidos')} />
+                  <SidebarItem icon={Box} label="Backorders" active={view === 'Backorders'} onClick={() => setView('Backorders')} />
+                </>
               )}
-              <SidebarItem icon={FileText} label="Cotizador" active={view === 'Cotizador'} onClick={() => setView('Cotizador')} />
-              <SidebarItem icon={ClipboardList} label="Pedidos" active={view === 'Pedidos'} onClick={() => setView('Pedidos')} />
-              <SidebarItem icon={Box} label="Backorders" active={view === 'Backorders'} onClick={() => setView('Backorders')} />
-            </>
-          )}
 
-          <SidebarSection title="COMERCIAL" isOpen={comercialOpen} onToggle={() => setComercialOpen(!comercialOpen)} />
-          {comercialOpen && (
-            <>
-              <SidebarItem icon={Users} label="Prospectos" active={view === 'Prospectos'} onClick={() => setView('Prospectos')} />
-              <SidebarItem icon={Users} label="Clientes" active={view === 'Clientes'} onClick={() => setView('Clientes')} />
-              <SidebarItem icon={DollarSign} label="Pipeline de Ventas" active={view === 'Ventas'} onClick={() => setView('Ventas')} />
-              <SidebarItem icon={Receipt} label="Facturación" active={view === 'Facturacion'} onClick={() => setView('Facturacion')} />
-              <SidebarItem icon={Building2} label="Cartera" active={view === 'Cartera'} onClick={() => setView('Cartera')} />
-              <SidebarItem icon={TrendingUp} label="KPIs" active={view === 'KPIs'} onClick={() => setView('KPIs')} />
-            </>
-          )}
-
-          <SidebarSection title="LOGÍSTICA" isOpen={logisticaOpen} onToggle={() => setLogisticaOpen(!logisticaOpen)} />
-          {logisticaOpen && (
-            <>
-              <SidebarItem icon={Truck} label="Logística" active={view === 'Logistica'} onClick={() => setView('Logistica')} />
-            </>
-          )}
-
-          <SidebarSection title="ADMINISTRACIÓN" isOpen={adminOpen} onToggle={() => setAdminOpen(!adminOpen)} />
-          {adminOpen && (
-            <>
-              {user?.role !== 'Vendedor' && user?.role !== 'vendedor' && (
-                <SidebarItem icon={BarChart2} label="Reportes" active={view === 'Reportes'} onClick={() => setView('Reportes')} />
+              <SidebarSection title="FINANZAS" isOpen={comercialOpen} onToggle={() => setComercialOpen(!comercialOpen)} />
+              {comercialOpen && (
+                <>
+                  <SidebarItem icon={Receipt} label="Facturación" active={view === 'Facturacion'} onClick={() => setView('Facturacion')} />
+                  <SidebarItem icon={Building2} label="Cartera" active={view === 'Cartera'} onClick={() => setView('Cartera')} />
+                </>
               )}
-              {user?.role !== 'Vendedor' && user?.role !== 'vendedor' && (
-                <SidebarItem icon={Users} label="Personal" active={view === 'Personal'} onClick={() => setView('Personal')} />
+
+              <SidebarSection title="ANÁLISIS" isOpen={logisticaOpen} onToggle={() => setLogisticaOpen(!logisticaOpen)} />
+              {logisticaOpen && (
+                <>
+                  <SidebarItem icon={TrendingUp} label="KPIs" active={view === 'KPIs'} onClick={() => setView('KPIs')} />
+                </>
               )}
-              {(user?.role === 'Master' || user?.role === 'Administrador Master') && (
-                <SidebarItem icon={Settings} label="Sistema" active={view === 'Sistema'} onClick={() => setView('Sistema')} />
+            </>
+          ) : (
+            <>
+              <SidebarSection title="OPERACIÓN" isOpen={operacionOpen} onToggle={() => setOperacionOpen(!operacionOpen)} />
+              {operacionOpen && (
+                <>
+                  <SidebarItem icon={Package} label="Inventario" active={view === 'Inventario'} onClick={() => setView('Inventario')} />
+                  <SidebarItem icon={FileText} label="Cotizador" active={view === 'Cotizador'} onClick={() => setView('Cotizador')} />
+                  <SidebarItem icon={ClipboardList} label="Pedidos" active={view === 'Pedidos'} onClick={() => setView('Pedidos')} />
+                  <SidebarItem icon={Box} label="Backorders" active={view === 'Backorders'} onClick={() => setView('Backorders')} />
+                </>
+              )}
+
+              <SidebarSection title="COMERCIAL" isOpen={comercialOpen} onToggle={() => setComercialOpen(!comercialOpen)} />
+              {comercialOpen && (
+                <>
+                  <SidebarItem icon={Users} label="Prospectos" active={view === 'Prospectos'} onClick={() => setView('Prospectos')} />
+                  <SidebarItem icon={Users} label="Clientes" active={view === 'Clientes'} onClick={() => setView('Clientes')} />
+                  <SidebarItem icon={DollarSign} label="Pipeline de Ventas" active={view === 'Ventas'} onClick={() => setView('Ventas')} />
+                  <SidebarItem icon={Receipt} label="Facturación" active={view === 'Facturacion'} onClick={() => setView('Facturacion')} />
+                  <SidebarItem icon={Building2} label="Cartera" active={view === 'Cartera'} onClick={() => setView('Cartera')} />
+                  <SidebarItem icon={TrendingUp} label="KPIs" active={view === 'KPIs'} onClick={() => setView('KPIs')} />
+                </>
+              )}
+
+              <SidebarSection title="LOGÍSTICA" isOpen={logisticaOpen} onToggle={() => setLogisticaOpen(!logisticaOpen)} />
+              {logisticaOpen && (
+                <>
+                  <SidebarItem icon={Truck} label="Logística" active={view === 'Logistica'} onClick={() => setView('Logistica')} />
+                </>
+              )}
+
+              <SidebarSection title="ADMINISTRACIÓN" isOpen={adminOpen} onToggle={() => setAdminOpen(!adminOpen)} />
+              {adminOpen && (
+                <>
+                  <SidebarItem icon={BarChart2} label="Reportes" active={view === 'Reportes'} onClick={() => setView('Reportes')} />
+                  <SidebarItem icon={Users} label="Personal" active={view === 'Personal'} onClick={() => setView('Personal')} />
+                  {(user?.role === 'Master' || user?.role === 'Administrador Master') && (
+                    <SidebarItem icon={Settings} label="Sistema" active={view === 'Sistema'} onClick={() => setView('Sistema')} />
+                  )}
+                </>
               )}
             </>
           )}
@@ -9238,7 +9573,7 @@ function App() {
             </div>
             <div className="user-info">
               <span className="user-name">{user.name}</span>
-              <span className="user-email" style={{ fontSize: '0.7rem', color: '#10b981', fontWeight: 700 }}>{user.role}</span>
+              <span className="user-email" style={{ fontSize: '0.7rem', color: '#10b981', fontWeight: 700 }}>{user.role === 'Administrador Master' ? 'Master' : user.role}</span>
             </div>
           </div>
           <div className="logout-btn" onClick={handleLogout}>

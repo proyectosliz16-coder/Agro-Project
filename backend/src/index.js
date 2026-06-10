@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const os = require('os');
+const bcrypt = require('bcryptjs');
 const { PrismaClient } = require('@prisma/client');
 
 const prisma = new PrismaClient();
@@ -28,7 +29,33 @@ app.post('/api/login', async (req, res) => {
       return res.status(401).json({ error: 'Credenciales inválidas' });
     }
 
-    if (user.password !== password) {
+    if (user.status && user.status.toLowerCase().includes('inactiv')) {
+      console.log(`Intento de login de usuario inactivo: ${email}`);
+      return res.status(403).json({ error: 'Cuenta deshabilitada. Contacte al administrador.' });
+    }
+
+    let passwordMatch = false;
+    const isHash = user.password.startsWith('$2a$') || user.password.startsWith('$2b$') || user.password.startsWith('$2y$');
+    
+    if (isHash) {
+      passwordMatch = bcrypt.compareSync(password, user.password);
+    } else {
+      passwordMatch = user.password === password;
+      if (passwordMatch) {
+        try {
+          const hashedPassword = bcrypt.hashSync(password, 10);
+          await prisma.user.update({
+            where: { id: user.id },
+            data: { password: hashedPassword }
+          });
+          console.log(`Contraseña auto-encriptada para el usuario: ${email}`);
+        } catch (hashErr) {
+          console.error('Error al auto-encriptar contraseña:', hashErr.message);
+        }
+      }
+    }
+
+    if (!passwordMatch) {
       console.log(`Contraseña incorrecta para: ${email}`);
       return res.status(401).json({ error: 'Credenciales inválidas' });
     }
@@ -61,12 +88,14 @@ app.post('/api/login', async (req, res) => {
 app.post('/api/register', async (req, res) => {
   const { name, username, email, password, phone, avatar, role } = req.body;
   try {
+    const rawPassword = password || '1234';
+    const hashedPassword = bcrypt.hashSync(rawPassword, 10);
     const newUser = await prisma.user.create({
       data: { 
         name, 
         username: (username && username.trim() !== '') ? username : null, 
         email, 
-        password: password || '1234', 
+        password: hashedPassword, 
         phone, 
         avatar, 
         role 
@@ -110,7 +139,7 @@ app.get('/api/users', async (req, res) => {
 app.put('/api/users/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, username, email, phone, avatar, role, password } = req.body;
+    const { name, username, email, phone, avatar, role, password, status } = req.body;
     
     console.log(`Petición para actualizar usuario ID: ${id}`);
 
@@ -123,10 +152,12 @@ app.put('/api/users/:id', async (req, res) => {
       avatar, 
       role 
     };
+    if (status) updateData.status = status;
     
     // Si se envía contraseña y no está vacía, actualizarla
     if (password && password.trim() !== '') {
-      updateData.password = password;
+      const isAlreadyHashed = password.startsWith('$2a$') || password.startsWith('$2b$') || password.startsWith('$2y$');
+      updateData.password = isAlreadyHashed ? password : bcrypt.hashSync(password, 10);
     }
 
     const updatedUser = await prisma.user.update({
@@ -430,6 +461,42 @@ app.put('/api/activities/:id', async (req, res) => {
   }
 });
 
+// Transferencia de Cartera
+app.post('/api/users/transfer-portfolio', async (req, res) => {
+  try {
+    const { fromVendedor, toVendedor } = req.body;
+    if (!fromVendedor || !toVendedor) {
+      return res.status(400).json({ error: 'Faltan datos de vendedor de origen o destino' });
+    }
+    
+    // Transferir prospectos y clientes
+    const prospectResult = await prisma.prospect.updateMany({
+      where: {
+        vendedor: fromVendedor
+      },
+      data: {
+        vendedor: toVendedor
+      }
+    });
+
+    // Transferir deudas activas en Cartera
+    const carteraResult = await prisma.cartera.updateMany({
+      where: { seller: fromVendedor },
+      data: { seller: toVendedor }
+    });
+
+    res.json({ 
+      success: true, 
+      message: 'Cartera transferida exitosamente', 
+      prospectsTransferred: prospectResult.count,
+      carteraTransferred: carteraResult.count
+    });
+  } catch (error) {
+    console.error('Error al transferir cartera:', error);
+    res.status(500).json({ error: error.message || 'Error al transferir cartera' });
+  }
+});
+
 // Eliminar una actividad
 app.delete('/api/activities/:id', async (req, res) => {
   const { id } = req.params;
@@ -474,7 +541,7 @@ app.post('/api/prospects', async (req, res) => {
 // Actualizar prospecto
 app.put('/api/prospects/:id', async (req, res) => {
   const { id } = req.params;
-  const { stage, isClient, name, phone, email, interest, location, budget, notes, appointmentDate, appointmentMethod } = req.body;
+  const { stage, isClient, name, phone, email, interest, location, budget, notes, appointmentDate, appointmentMethod, vendedor } = req.body;
   
   console.log(`Intentando actualizar prospecto ${id} con data:`, req.body);
   
@@ -499,6 +566,7 @@ app.put('/api/prospects/:id', async (req, res) => {
     if (appointmentDate !== undefined) dataToUpdate.appointmentDate = appointmentDate;
     if (appointmentMethod !== undefined) dataToUpdate.appointmentMethod = appointmentMethod;
     if (req.body.meetingDone !== undefined) dataToUpdate.meetingDone = !!req.body.meetingDone;
+    if (vendedor !== undefined) dataToUpdate.vendedor = vendedor;
 
     const updated = await prisma.prospect.update({
       where: { id: parseInt(id) },
@@ -652,6 +720,70 @@ app.post('/api/ventas/add-sale', async (req, res) => {
   } catch (err) {
     console.error('Error en add-sale:', err);
     res.status(500).json({ error: 'Error al registrar la venta', details: err.message });
+  }
+});
+// --- RUTAS DE APROBACIONES ---
+app.get('/api/approvals', async (req, res) => {
+  try {
+    const approvals = await prisma.approval.findMany({
+      orderBy: { createdAt: 'desc' }
+    });
+    res.json(approvals);
+  } catch (err) {
+    res.status(500).json({ error: 'Error al obtener aprobaciones' });
+  }
+});
+
+app.post('/api/approvals', async (req, res) => {
+  try {
+    const { type, client, amount } = req.body;
+    const approval = await prisma.approval.create({
+      data: { type, client, amount, status: 'pending' }
+    });
+    res.json(approval);
+  } catch (err) {
+    res.status(500).json({ error: 'Error al crear aprobación' });
+  }
+});
+
+app.put('/api/approvals/:id/:action', async (req, res) => {
+  try {
+    const { id, action } = req.params;
+    if (action !== 'approve' && action !== 'reject') {
+      return res.status(400).json({ error: 'Acción inválida' });
+    }
+    const status = action === 'approve' ? 'approved' : 'rejected';
+    const updated = await prisma.approval.update({
+      where: { id: parseInt(id) },
+      data: { status }
+    });
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ error: 'Error al actualizar aprobación' });
+  }
+});
+
+// --- RUTAS DE DASHBOARD CHARTS ---
+app.get('/api/dashboard/charts', async (req, res) => {
+  try {
+    const salesCount = await prisma.backorder.count({ where: { estado: { notIn: ['Cotización', 'Perdido', 'Cancelado'] } } });
+    const prospectsCount = await prisma.prospect.count();
+    
+    const generateCurve = (base) => {
+       const curve = [];
+       for(let i=0; i<7; i++) {
+         curve.push(Math.min(100, Math.max(10, base + (Math.random() * 40 - 20))));
+       }
+       return curve;
+    };
+    
+    res.json({
+      ventas: generateCurve(50 + (salesCount % 20)),
+      pedidos: generateCurve(40 + (salesCount % 10)),
+      prospectos: generateCurve(30 + (prospectsCount % 30))
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Error al obtener gráficas' });
   }
 });
 

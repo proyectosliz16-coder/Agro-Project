@@ -16,6 +16,7 @@ model User {
   phone     String?
   avatar    String?
   role      String   @default("vendedor")
+  status    String   @default("Activo")
   createdAt DateTime @default(now())
 }
 
@@ -61,6 +62,7 @@ model Backorder {
 
 model Prospect {
   id        Int      @id @default(autoincrement())
+  vendedor  String?
   name      String
   phone     String?
   email     String?
@@ -79,6 +81,7 @@ model Prospect {
 
 model Activity {
   id          Int      @id @default(autoincrement())
+  vendedor    String?
   type        String   @default("Phone")
   client      String
   description String
@@ -104,5 +107,14 @@ model SellerPerformance {
   email     String
   sales     Float    @default(0.0)
   budget    Float    @default(0.0)
+  createdAt DateTime @default(now())
+}
+
+model Approval {
+  id        Int      @id @default(autoincrement())
+  type      String
+  client    String
+  amount    String
+  status    String   @default("pending")
   createdAt DateTime @default(now())
 }
