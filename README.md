@@ -269,6 +269,30 @@ Este proyecto refleja mi experiencia en desarrollo full-stack, diseño de aplica
 - Configuración de entornos de desarrollo mediante Docker.
 - Organización y documentación de proyectos de software.
 
+
+## Capturas de pantalla
+
+### Dashboard principal
+Vista general de AgriFlow Pro y sus principales indicadores.
+
+![Dashboard de AgriFlow Pro](docs/screenshots/dashboard.png)
+
+### Gestión de inventario
+Interfaz del módulo de inventario para consultar y administrar productos.
+
+![Inventario de AgriFlow Pro](docs/screenshots/inventario.png)
+
+### Gestión de prospectos
+Vista del módulo para gestionar y dar seguimiento a prospectos comerciales.
+
+![Prospectos de AgriFlow Pro](docs/screenshots/prospectos.png)
+
+### Pipeline de ventas
+Vista del módulo para seguir el progreso de cada lead a lo largo de las distintas etapas del proceso de ventas.
+
+![Pipeline de AgriFlow Pro](docs/screenshots/pipeline.png)
+
+
 ## Contexto del proyecto
 
 Proyecto desarrollado como parte de una estancia profesional.
