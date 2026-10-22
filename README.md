@@ -234,12 +234,7 @@ Vista del módulo para seguir el progreso de cada lead a lo largo de las distint
 
 ![Pipeline de AgriFlow Pro](docs/screenshots/pipeline.png)
 
-
-## Contexto del proyecto
-
-Proyecto desarrollado como parte de una estancia profesional.
-
 ---
 
-**AgriFlow Pro** 🌱  
+**AgriFlow Pro**  
 *Tecnología para organizar y optimizar la gestión comercial agrícola.*
