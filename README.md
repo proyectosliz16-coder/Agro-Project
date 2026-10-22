@@ -185,7 +185,7 @@ npm run dev
 
 El frontend estará disponible en `http://localhost:5173`, si ese es el puerto configurado en Vite.
 
-## 🔧 Variables de entorno
+## Variables de entorno
 
 El backend utiliza variables de entorno para configurar la conexión a la base de datos y el puerto del servidor.
 
