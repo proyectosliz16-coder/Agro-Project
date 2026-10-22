@@ -6,6 +6,8 @@ AgriFlow Pro es una aplicación web de gestión comercial diseñada para el sect
 
 El sistema integra una interfaz web, una API REST y una base de datos relacional para organizar la información y ofrecer funcionalidades adaptadas a las necesidades de los equipos comerciales.
 
+---
+
 ## Funcionalidades principales
 
 - **Autenticación de usuarios:** acceso al sistema mediante inicio de sesión y registro.
@@ -17,7 +19,9 @@ El sistema integra una interfaz web, una API REST y una base de datos relacional
 - **Gestión comercial:** consulta de información de ventas y desempeño de vendedores.
 - **Sistema de aprobaciones:** consulta y administración de solicitudes que requieren autorización.
 - **Logística:** herramientas para el despacho y seguimiento de pedidos.
-- **Reportes:** funcionalidades para generar y exportar información en PDF y Excel, cuando estén disponibles en la versión publicada.
+- **Reportes:** generación y exportación de información en PDF y Excel.
+
+---
 
 ## Stack tecnológico
 
@@ -29,6 +33,8 @@ El sistema integra una interfaz web, una API REST y una base de datos relacional
 | Base de datos | PostgreSQL |
 | ORM | Prisma |
 | Contenedores | Docker y Docker Compose |
+
+---
 
 ## Arquitectura del sistema
 
@@ -60,11 +66,11 @@ AgriFlow Pro utiliza una arquitectura web en la que el frontend se comunica con 
 └───────────────────────────────┘
 ```
 
-Docker Compose permite configurar y ejecutar los servicios del sistema mediante contenedores, de acuerdo con la configuración del proyecto.
+Docker Compose permite configurar y ejecutar los servicios del sistema mediante contenedores.
+
+---
 
 ## Roles del sistema
-
-El sistema contempla diferentes perfiles de usuario para organizar los permisos y las responsabilidades.
 
 | Rol | Función principal |
 |---|---|
@@ -73,7 +79,7 @@ El sistema contempla diferentes perfiles de usuario para organizar los permisos 
 | **Vendedor** | Gestión de prospectos, pedidos y cartera propia. |
 | **Logística** | Gestión del despacho y seguimiento de pedidos. |
 
-Los permisos específicos están determinados por la implementación de cada módulo.
+---
 
 ## Instalación y ejecución
 
@@ -85,8 +91,10 @@ Los permisos específicos están determinados por la implementación de cada mó
 
 **Opción B — Sin Docker**
 
-- [Node.js](https://nodejs.org/) v18 o superior.
-- [PostgreSQL](https://www.postgresql.org/) v14 o superior.
+- [Node.js](https://nodejs.org/) v18 o superior
+- [PostgreSQL](https://www.postgresql.org/) v14 o superior
+
+---
 
 ### Opción A: ejecución con Docker
 
@@ -103,108 +111,71 @@ cd Agro-Project
 docker-compose up --build
 ```
 
-Si la configuración actual de Docker Compose utiliza estos puertos, podrás acceder a los servicios desde las siguientes direcciones:
-
 | Servicio | Dirección |
 |---|---|
 | Frontend | http://localhost:5173 |
 | Backend API | http://localhost:8080 |
 | PostgreSQL | localhost:5432 |
 
-Para detener los servicios, ejecuta:
+Para detener los servicios:
 
 ```bash
 docker-compose down
 ```
 
+---
+
 ### Opción B: instalación manual
 
 #### 1. Configurar PostgreSQL
 
-Crea una base de datos llamada `agro_flow` y un usuario con los permisos necesarios para acceder a ella.
+Crea una base de datos llamada `agro_flow` y un usuario con los permisos necesarios.
 
 #### 2. Configurar el backend
 
-Accede a la carpeta del backend:
-
 ```bash
 cd backend
+cp .env.example .env   # En Windows: copia y renombra el archivo manualmente
 ```
 
-Crea tu archivo local de variables de entorno a partir de la plantilla:
-
-```bash
-cp .env.example .env
-```
-
-En Windows, también puedes copiar `.env.example` manualmente y renombrar la copia como `.env`.
-
-Edita `backend/.env` y configura la conexión a PostgreSQL con tus credenciales locales.
-
-Instala las dependencias:
+Edita `backend/.env` con tus credenciales de PostgreSQL, instala las dependencias y sincroniza la base de datos:
 
 ```bash
 npm install
-```
-
-Genera el cliente de Prisma:
-
-```bash
 npm run prisma:generate
-```
-
-Sincroniza el esquema de la base de datos:
-
-```bash
 npm run prisma:push
-```
-
-Inicia el servidor:
-
-```bash
 npm run dev
 ```
 
-El backend estará disponible en `http://localhost:8080`, siempre que se conserve el puerto configurado.
+El backend estará disponible en `http://localhost:8080`.
 
 #### 3. Configurar el frontend
 
-Abre una nueva terminal en la raíz del proyecto.
-
-Instala las dependencias:
+En una nueva terminal desde la raíz del proyecto:
 
 ```bash
 npm install
-```
-
-Inicia el servidor de desarrollo:
-
-```bash
 npm run dev
 ```
 
-El frontend estará disponible en `http://localhost:5173`, si ese es el puerto configurado en Vite.
+El frontend estará disponible en `http://localhost:5173`.
+
+---
 
 ## Variables de entorno
 
-El backend utiliza variables de entorno para configurar la conexión a la base de datos y el puerto del servidor.
-
-Crea el archivo `backend/.env` a partir de `backend/.env.example`.
-
-Ejemplo:
+El backend requiere un archivo `backend/.env` basado en `backend/.env.example`.
 
 ```env
 DATABASE_URL="postgresql://USUARIO:CONTRASEÑA@localhost:5432/agro_flow"
 PORT=8080
 ```
 
-Sustituye `USUARIO` y `CONTRASEÑA` por las credenciales de tu entorno local.
+> **Importante:** no incluyas credenciales reales en el repositorio. El archivo `.env.example` debe contener únicamente valores de ejemplo.
 
-**Importante:** no publiques credenciales reales, contraseñas ni otros secretos en el repositorio. El archivo `.env.example` debe contener únicamente valores de ejemplo.
+---
 
 ## Endpoints principales de la API
-
-Las siguientes rutas corresponden a los endpoints documentados del proyecto.
 
 | Método | Ruta | Descripción |
 |---|---|---|
@@ -219,11 +190,9 @@ Las siguientes rutas corresponden a los endpoints documentados del proyecto.
 | `GET` | `/api/approvals` | Consulta de aprobaciones. |
 | `GET` | `/api/health` | Verificación del estado del servidor. |
 
-La disponibilidad de cada endpoint y los permisos necesarios dependen de la implementación actual del backend.
+---
 
 ## Estructura del proyecto
-
-La estructura general documentada del repositorio es la siguiente:
 
 ```text
 Agro-Project/
@@ -235,39 +204,12 @@ Agro-Project/
 │   ├── .env.example        # Plantilla de variables de entorno
 │   └── package.json        # Dependencias del backend
 ├── public/                 # Recursos públicos
-├── assets/                 # Recursos adicionales
 ├── docker-compose.yml      # Configuración de servicios
 ├── Dockerfile              # Configuración de la imagen del frontend
 └── package.json            # Dependencias del frontend
 ```
 
-## Desarrollo y autoría
-
-**AgriFlow Pro fue desarrollado íntegramente por mí, de manera independiente.**
-
-Me encargué del desarrollo de la aplicación de principio a fin, abarcando las distintas capas del sistema y la integración de sus componentes para construir una solución web de gestión comercial orientada al sector agrícola.
-
-### Responsabilidades y trabajo realizado
-
-- **Desarrollo frontend:** implementación de la interfaz de usuario y los componentes de la aplicación con React y Vite.
-- **Desarrollo backend:** implementación de la lógica del servidor y de la API REST mediante Node.js y Express.
-- **Diseño e integración de la base de datos:** trabajo con PostgreSQL y Prisma ORM.
-- **Autenticación y gestión de roles:** implementación de las funcionalidades de acceso y administración de usuarios.
-- **Desarrollo de módulos:** construcción de las funcionalidades comerciales y operativas del sistema.
-- **Gestión de información comercial:** integración de funcionalidades relacionadas con prospectos, pedidos, inventario, cartera y aprobaciones.
-- **Configuración del entorno:** trabajo con Docker y Docker Compose para facilitar la ejecución de los servicios.
-
-Este proyecto refleja mi experiencia en desarrollo full-stack, diseño de aplicaciones web, integración de tecnologías y construcción independiente de soluciones de software.
-
-## Conocimientos aplicados
-
-- Desarrollo de aplicaciones web full-stack.
-- Construcción e integración de API REST.
-- Diseño y gestión de bases de datos relacionales.
-- Integración de frontend, backend y persistencia de datos.
-- Gestión de usuarios y permisos basados en roles.
-- Configuración de entornos de desarrollo mediante Docker.
-- Organización y documentación de proyectos de software.
+---
 
 
 ## Capturas de pantalla
